@@ -146,7 +146,10 @@ static NSString* ValueText(uint32_t index, float v) {
 - (void)mouseDragged:(NSEvent*)event {
     if (!mDragging) return;
     NSPoint loc = [event locationInWindow];
-    double dy = mLastLocation.y - loc.y;
+    // Non-flipped window coordinates: y grows upward, so dragging up must
+    // increase the value (and thus rotate the knob clockwise, matching the
+    // drawing convention and standard knob behavior).
+    double dy = loc.y - mLastLocation.y;
     mLastLocation = loc;
     const polar_clap::ParamDesc& d = kParams[mIndex];
     double range = d.max - d.min;
