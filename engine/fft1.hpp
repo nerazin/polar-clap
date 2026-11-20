@@ -11,8 +11,7 @@
 #include <stdexcept>
 #include <utility>
 #include <vector>
-#include "original_math_tables.hpp"
-#include "original_fade_tables.hpp"
+#include "bundled_math.hpp"
 
 namespace polar_recovered {
 
@@ -29,7 +28,7 @@ public:
                           Source source, Cosine cosine = {})
         : forward_(std::move(forward)), inverse_(std::move(inverse)),
           source_(std::move(source)), cosine_(std::move(cosine)) {
-        if (!cosine_) cosine_ = [](float x) { return std::cos(x); };
+        if (!cosine_) cosine_ = [](float x) { return bundled::cosf(x); };
         capacity_ = nextPowerOfTwo(static_cast<int>(sampleRate * 0.07999999821186066f));
         ringMask_ = 2 * capacity_ - 1;
         for (auto& voice : ring_)
@@ -65,10 +64,6 @@ public:
             a *= 0.5f;
             window_[j] = 0.5f - a;
         }
-        // Deterministic initializer DATA from the reviewed original routines.
-        // Processing equations above are unchanged from the verified port.
-        fillOriginalHann(window_.data(), n_);
-        fillOriginalFade(fade_.data(), fadeLength_);
         return true;
     }
 

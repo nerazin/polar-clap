@@ -1,7 +1,9 @@
 // White-box tests: exercises the C++ layer directly.
 //  - member-pointer parameter table must match the engine's public
 //    set(name, value) string API (bit-exact audio after identical input)
-//  - GUI value path: uiSetValue marks dirty, params_flush emits values
+//  - GUI edits reach the host as gesture begin/value/end from flush() and process()
+//  - host modulation routing (post-smoother offsets, stepped rounding, clamping)
+//  - host transport tempo drives the LFO
 //  - text formatting / parsing special cases
 
 #include <clap/clap.h>
@@ -40,12 +42,16 @@ static const clap_host_t kHost = {
 struct OutEvents {
     std::vector<clap_id> ids;
     std::vector<double> values;
+    std::vector<uint16_t> types;
+    bool wildcard = true;
     static bool CLAP_ABI try_push(const clap_output_events_t* e, const clap_event_header_t* h) {
         auto* self = static_cast<OutEvents*>(e->ctx);
+        self->types.push_back(h->type);
         if (h->type == CLAP_EVENT_PARAM_VALUE) {
             auto* ev = reinterpret_cast<const clap_event_param_value_t*>(h);
             self->ids.push_back(ev->param_id);
             self->values.push_back(ev->value);
+            self->wildcard = self->wildcard && ev->note_id == -1 && ev->port_index == -1 && ev->channel == -1 && ev->key == -1;
         }
         return true;
     }
@@ -106,42 +112,94 @@ int main() {
         printf("table-vs-set(): ok\n");
     }
 
-    // ---- 2. uiSetValue / params_flush
+    // ---- 2. GUI gestures reach the host from flush() and from process()
     {
         clap_plugin_t* cp = PolarPlugin::create(&kHost);
         if (!cp) { fail("plugin create"); return 1; }
         PolarPlugin* pl = PolarPlugin::fromClap(cp);
+        cp->init(cp);
+        pl->uiBeginGesture(polar_clap::P_PITCH_1);
         pl->uiSetValue(polar_clap::P_PITCH_1, 7.0f);
-        pl->uiSetValue(polar_clap::P_LEVEL_1, 0.5f);
+        pl->uiEndGesture(polar_clap::P_PITCH_1);
+        pl->uiTap(polar_clap::P_ALGORITHM, 1.0f);
 
         OutEvents out;
         pl->flushParams(nullptr, &out.iface);
-        if (out.ids.size() != 2) fail("flush did not emit exactly the two dirty params");
-        bool foundPitch = false, foundLevel = false;
-        for (size_t i = 0; i < out.ids.size(); ++i) {
-            if (out.ids[i] == (clap_id)polar_clap::P_PITCH_1 && std::fabs(out.values[i] - 7.0) < 1e-9) foundPitch = true;
-            if (out.ids[i] == (clap_id)polar_clap::P_LEVEL_1 && std::fabs(out.values[i] - 0.5) < 1e-9) foundLevel = true;
-        }
-        if (!foundPitch) fail("pitch_1 value event wrong/missing");
-        if (!foundLevel) fail("level_1 value event wrong/missing");
-        // second flush must be clean
+        const uint16_t want[] = {CLAP_EVENT_PARAM_GESTURE_BEGIN, CLAP_EVENT_PARAM_VALUE, CLAP_EVENT_PARAM_GESTURE_END,
+                                 CLAP_EVENT_PARAM_GESTURE_BEGIN, CLAP_EVENT_PARAM_VALUE, CLAP_EVENT_PARAM_GESTURE_END};
+        if (out.types.size() != 6) fail("flush did not emit begin/value/end for both edits");
+        for (size_t i = 0; i < out.types.size() && i < 6; ++i) if (out.types[i] != want[i]) fail("gesture event order");
+        if (out.ids.size() != 2 || out.ids[0] != (clap_id)polar_clap::P_PITCH_1 || out.values[0] != 7.0 ||
+            out.ids[1] != (clap_id)polar_clap::P_ALGORITHM || out.values[1] != 1.0) fail("value events wrong");
+        if (!out.wildcard) fail("value events must be global (note/port/channel/key = -1)");
         OutEvents out2;
         pl->flushParams(nullptr, &out2.iface);
-        if (!out2.ids.empty()) fail("second flush emitted spurious events");
+        if (!out2.types.empty()) fail("second flush emitted spurious events");
+
+        // While the host runs process(), GUI edits leave through process()'s output queue.
+        cp->activate(cp, 48000, 1, 512);
+        pl->uiSetValue(polar_clap::P_LEVEL_1, 0.5f);
+        float zeros[256] = {}, oL[256], oR[256];
+        float* inCh[2] = {zeros, zeros}; float* outCh[2] = {oL, oR};
+        clap_audio_buffer_t inBuf{}, outBuf{};
+        inBuf.data32 = inCh; inBuf.channel_count = 2; outBuf.data32 = outCh; outBuf.channel_count = 2;
+        clap_input_events_t noEvents{}; noEvents.size = [](const clap_input_events_t*) -> uint32_t { return 0; };
+        noEvents.get = [](const clap_input_events_t*, uint32_t) -> const clap_event_header_t* { return nullptr; };
+        OutEvents out3;
+        clap_process_t pr{}; pr.frames_count = 256; pr.audio_inputs = &inBuf; pr.audio_inputs_count = 1;
+        pr.audio_outputs = &outBuf; pr.audio_outputs_count = 1; pr.in_events = &noEvents; pr.out_events = &out3.iface;
+        pl->process(&pr);
+        if (out3.ids.size() != 1 || out3.ids[0] != (clap_id)polar_clap::P_LEVEL_1) fail("process() did not report the GUI edit");
 
         // clamping: garbage UI value must clamp, not store
         pl->uiSetValue(polar_clap::P_PITCH_1, 999.f);
         if (std::fabs(pl->uiBase(polar_clap::P_PITCH_1) - 36.f) > 1e-6) fail("uiSetValue clamp");
 
+        // ---- host transport: tempo reaches the LFO
+        clap_event_transport_t tr{};
+        tr.flags = CLAP_TRANSPORT_HAS_TEMPO | CLAP_TRANSPORT_HAS_BEATS_TIMELINE | CLAP_TRANSPORT_IS_PLAYING;
+        tr.tempo = 137.5; tr.song_pos_beats = 3 * CLAP_BEATTIME_FACTOR;
+        pr.transport = &tr;
+        pl->uiSetValue(polar_clap::P_LFO_SYNC, 1.f);
+        pl->process(&pr);
+        if (pl->processor().parameters().tempo != 137.5f || pl->uiTempo() != 137.5f) fail("host tempo not used by the LFO");
+        cp->deactivate(cp);
         cp->destroy(cp);
-        printf("ui/flush: ok\n");
+        printf("gui gestures / process events / transport: ok\n");
+    }
+
+    // ---- 2b. host modulation routing
+    {
+        float base[PARAM_COUNT], mod[PARAM_COUNT];
+        for (int i = 0; i < PARAM_COUNT; ++i) { base[i] = kParams[i].def; mod[i] = 0.f; }
+        polar_recovered::PolarEngine::Parameters p;
+        base[polar_clap::P_PITCH_1] = 30; mod[polar_clap::P_PITCH_1] = 20;   // clamps at +36: offset 6
+        mod[polar_clap::P_TUNE_1] = 50;                                      // +0.5 st
+        mod[polar_clap::P_POSITION] = 0.25f; mod[polar_clap::P_CUTOFF] = -0.2f; mod[polar_clap::P_RESONANCE] = 0.1f;
+        mod[polar_clap::P_ALGORITHM] = 1.4f;                                 // stepped: 2 + 1.4 -> 3
+        mod[polar_clap::P_LOCK] = 0.6f;                                      // bool: 0 + 0.6 -> on
+        mod[polar_clap::P_LEVEL_1] = -0.3f;                                  // ordinary: base + mod
+        polar_clap::applyAllToEngine(base, mod, p);
+        if (p.pitch_1 != 30 || p.pitch_mod_1 != 6.5f) fail("pitch modulation must bypass the smoother, clamped to range");
+        if (p.position != kParams[polar_clap::P_POSITION].def || p.position_mod != 0.25f) fail("position modulation routing");
+        if (std::fabs(p.cutoff_mod + 0.2f) > 1e-6f || std::fabs(p.resonance_mod - 0.1f) > 1e-6f) fail("filter modulation routing");
+        if (p.algorithm != 3 || !p.lock) fail("stepped/bool modulation");
+        if (std::fabs(p.level_1 - 0.5f) > 1e-6f) fail("level modulation");
+        for (uint32_t i = 0; i < (uint32_t)PARAM_COUNT; ++i)
+            if (polar_clap::isModulatable(i) == (i == polar_clap::P_RESET || i == polar_clap::P_BYPASS)) fail("modulatable flag policy");
+        // With zero modulation the engine sees exactly the base values (verified signal path unchanged).
+        for (int i = 0; i < PARAM_COUNT; ++i) mod[i] = 0.f;
+        polar_clap::applyAllToEngine(base, mod, p);
+        if (p.pitch_mod_1 != 0 || p.pitch_mod_2 != 0 || p.position_mod != 0 || p.cutoff_mod != 0 || p.resonance_mod != 0)
+            fail("zero modulation must leave post-smoother offsets at zero");
+        printf("modulation routing: ok\n");
     }
 
     // ---- 3. text formatting special cases
     {
         struct Case { uint32_t param; double value; const char* text; } cases[] = {
-            {polar_clap::P_ALGORITHM, 0.0, "Spectral"},
-            {polar_clap::P_ALGORITHM, 3.0, "Reverse"},
+            {polar_clap::P_ALGORITHM, 0.0, "Smooth"},
+            {polar_clap::P_ALGORITHM, 3.0, "Rev Loop"},
             {polar_clap::P_FILTER_MODE, 2.0, "HP"},
             {polar_clap::P_LFO_WAVE, 1.0, "Triangle"},
             {polar_clap::P_SPEED, 1.0, "Medium"},
@@ -171,7 +229,7 @@ int main() {
             {polar_clap::P_PAN_1, "R 20", 0.2},
             {polar_clap::P_CUTOFF, "75 %", 0.75},
             {polar_clap::P_CUTOFF, "0.8", 0.8},
-            {polar_clap::P_ALGORITHM, "Reverse", 3.0},
+            {polar_clap::P_ALGORITHM, "Rev Loop", 3.0},
             {polar_clap::P_ALGORITHM, "2", 2.0},
             {polar_clap::P_LOCK, "on", 1.0},
             {polar_clap::P_PITCH_1, "+7.0 st", 7.0},

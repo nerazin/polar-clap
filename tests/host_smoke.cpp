@@ -360,10 +360,8 @@ static void runScenario(const Scenario& sc, const clap_plugin_entry_t* entry) {
         while (nextEvent < events.size() && events[nextEvent].frame < end) {
             const Ev& e = events[nextEvent];
             if (e.isMod) {
-                if (kParams[e.param].kind == polar_clap::kFloat)
-                    mod[e.param] = (float)e.value;  // raw amount; sum is clamped
-                else
-                    mod[e.param] = 0.f;
+                if (polar_clap::isModulatable(e.param))
+                    mod[e.param] = (float)e.value;  // raw amount; applyAllToEngine clamps/rounds
             } else if (kParams[e.param].kind == polar_clap::kTrigger) {
                 if (e.value >= 0.5) { if (!resetLatched) { resetPending = true; resetLatched = true; } }
                 else resetLatched = false;

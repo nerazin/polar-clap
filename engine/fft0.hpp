@@ -7,6 +7,7 @@
 #include <stdexcept>
 #include <utility>
 #include <vector>
+#include "bundled_math.hpp"
 
 // Static reconstruction of Polar's original AlgType 0 (x86_64 image).
 // Build with normal IEEE arithmetic, without fast-math/FMA contraction.
@@ -42,11 +43,12 @@ public:
 
     PolarFFT0(Transform f, Transform i, Source s, float seconds = 0.07999999821186066f)
         : forward(std::move(f)), inverse(std::move(i)), source(std::move(s)), maxSeconds(seconds) {
-        // 0x43a0: LUT generated in double precision and stored as float.
+        // 0x43a0: LUT generated in double precision and stored as float, with the
+        // original's bundled sin/cos (bit-exact with the original table).
         double theta = -3.141592654;
         for (int k = 0; k < 1024; ++k) {
-            trig[2*k] = static_cast<float>(std::sin(theta));
-            trig[2*k+1] = static_cast<float>(std::cos(theta));
+            trig[2*k] = static_cast<float>(bundled::sin(theta));
+            trig[2*k+1] = static_cast<float>(bundled::cos(theta));
             theta += 0.00613592315234375;
         }
     }
@@ -87,7 +89,7 @@ public:
         for (int i = 0; i < n; ++i) {
             float angle = static_cast<float>(i) * twoPi;
             angle /= static_cast<float>(n);
-            float c = std::cos(angle);
+            float c = bundled::cosf(angle);
             c *= 0.5f;
             window[i] = 0.5f-c;
         }
@@ -229,7 +231,7 @@ private:
             if (re != 0.0f) { // intentional original check, including NaN
                 const float squareR = re*re, squareI = im*im;
                 m = std::sqrt(squareR+squareI);
-                phase = std::atan2(im, re);
+                phase = bundled::atan2f(im, re);
             }
             const float bin = static_cast<float>(k);
             float residual = phase-analysisPhase[ch][k];

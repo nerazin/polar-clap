@@ -3,7 +3,6 @@
 #include "packed_fft.hpp"
 #include "fft0.hpp"
 #include "fft1.hpp"
-#include "original_math_tables.hpp"
 #include <memory>
 #include <string>
 
@@ -33,7 +32,7 @@ class PolarProcessor {
         if(r.rebase_frames){spectral_->rebaseSource(r.rebase_frames*2);periodic_->rebaseSource(r.rebase_frames*2);}
         if((engine_.blockCount()&127u)==0){spectral_->rebaseSynthesis(0x100000);periodic_->rebaseOutput(0x100000);}
         if(half_!=r.fft_half_window) {
-            if(spectral_->setWindowHalf(r.fft_half_window))applyOriginalTables(*spectral_);
+            spectral_->setWindowHalf(r.fft_half_window);
             if(!periodic_->configureMaxLag(r.fft_half_window))throw std::runtime_error("Unsupported FFT window");
             half_=r.fft_half_window;
         }
@@ -59,6 +58,7 @@ public:
     float sampleRate()const{return engine_.sampleRate();}
     const PolarEngine& engine()const{return engine_;}
     void processBlock(const float*l,const float*r,float*outL,float*outR){engine_.processBlock(l,r,outL,outR);}
+    void setLfoPhase(double phase){engine_.setLfoPhase(phase);}
     // Names are the public message/API interface. All values must be finite.
     bool set(const std::string& name,float value){
         if(!std::isfinite(value))return false;

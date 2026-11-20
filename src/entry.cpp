@@ -34,7 +34,7 @@ static const clap_plugin_descriptor_t s_descriptor = {
     "",                                           // url
     "",                                           // manual_url
     "",                                           // support_url
-    "0.2.0",                                      // version
+    "0.3.0",                                      // version
     "Spectral / periodic / granular pitch reconstruction", // description
     s_features,                                   // features
 };
@@ -49,13 +49,15 @@ static bool CLAP_ABI params_get_info(const clap_plugin_t*, uint32_t index, clap_
     if (!info || index >= (uint32_t)PARAM_COUNT) return false;
     const polar_clap::ParamDesc& d = kParams[index];
     uint32_t flags = 0;
-    if (d.kind == polar_clap::kFloat) {
-        flags |= CLAP_PARAM_IS_MODULATABLE | CLAP_PARAM_IS_AUTOMATABLE;
-    } else {
+    if (d.kind != polar_clap::kFloat) {
         flags |= CLAP_PARAM_IS_STEPPED;
         if (d.enums) flags |= CLAP_PARAM_IS_ENUM;
-        if (d.kind != polar_clap::kTrigger) flags |= CLAP_PARAM_IS_AUTOMATABLE;
     }
+    if (d.kind != polar_clap::kTrigger) flags |= CLAP_PARAM_IS_AUTOMATABLE;
+    // Every parameter except Reset and Bypass takes host modulation; stepped ones round
+    // base + amount. Host modulators, the internal LFO and the envelope all stack.
+    if (polar_clap::isModulatable(index)) flags |= CLAP_PARAM_IS_MODULATABLE;
+    if (polar_clap::isHidden(index)) flags |= CLAP_PARAM_IS_HIDDEN;
     if (index == (uint32_t)polar_clap::P_BYPASS) flags |= CLAP_PARAM_IS_BYPASS;
     info->id = index;
     info->flags = flags;
@@ -126,6 +128,40 @@ static const clap_plugin_audio_ports_t s_audio_ports = {
     audio_ports_count,
     audio_ports_get,
 };
+
+// --------------------------------------------------------- remote controls
+// Bitwig shows these as the device's 8-knob pages, ready for its modulators.
+
+struct RemotePage { const char* name; polar_clap::ParamId ids[CLAP_REMOTE_CONTROLS_COUNT]; };
+static const RemotePage s_pages[] = {
+    {"Main", {polar_clap::P_ALGORITHM, polar_clap::P_POSITION, polar_clap::P_LOOP, polar_clap::P_PITCH_1,
+              polar_clap::P_PITCH_2, polar_clap::P_FEEDBACK_1, polar_clap::P_DRY, polar_clap::P_OUTPUT_DB}},
+    {"Shifters", {polar_clap::P_PITCH_1, polar_clap::P_TUNE_1, polar_clap::P_LEVEL_1, polar_clap::P_PAN_1,
+                  polar_clap::P_PITCH_2, polar_clap::P_TUNE_2, polar_clap::P_LEVEL_2, polar_clap::P_PAN_2}},
+    {"Feedback & Delay", {polar_clap::P_FEEDBACK_1, polar_clap::P_FEEDBACK_2, polar_clap::P_DELAY_2, polar_clap::P_ENABLE_2,
+                          polar_clap::P_LOCK, polar_clap::P_STEREO, polar_clap::P_SPEED, polar_clap::P_DRY_DELAY}},
+    {"Filter", {polar_clap::P_FILTER_ON, polar_clap::P_FILTER_MODE, polar_clap::P_CUTOFF, polar_clap::P_RESONANCE,
+                polar_clap::P_FILTER_LFO, polar_clap::P_FILTER_ENV, polar_clap::P_ENV_TO_AMP, polar_clap::P_OUTPUT_DB}},
+    {"LFO", {polar_clap::P_LFO_RATE, polar_clap::P_LFO_SYNC, polar_clap::P_DIVISION, polar_clap::P_LFO_WAVE,
+             polar_clap::P_PITCH_LFO_1, polar_clap::P_PITCH_LFO_2, polar_clap::P_POSITION_LFO, polar_clap::P_PAN_LFO}},
+    {"Envelope", {polar_clap::P_GATE, polar_clap::P_ATTACK, polar_clap::P_DECAY, polar_clap::P_SUSTAIN,
+                  polar_clap::P_RELEASE, polar_clap::P_PITCH_ENV_1, polar_clap::P_PITCH_ENV_2, polar_clap::P_POSITION_ENV}},
+};
+
+static uint32_t CLAP_ABI remote_count(const clap_plugin_t*) { return sizeof(s_pages) / sizeof(s_pages[0]); }
+
+static bool CLAP_ABI remote_get(const clap_plugin_t*, uint32_t index, clap_remote_controls_page_t* page) {
+    if (!page || index >= remote_count(nullptr)) return false;
+    const RemotePage& p = s_pages[index];
+    snprintf(page->section_name, sizeof(page->section_name), "%s", "Polar");
+    page->page_id = index;
+    snprintf(page->page_name, sizeof(page->page_name), "%s", p.name);
+    for (uint32_t i = 0; i < CLAP_REMOTE_CONTROLS_COUNT; ++i) page->param_ids[i] = (clap_id)p.ids[i];
+    page->is_for_preset = false;
+    return true;
+}
+
+static const clap_plugin_remote_controls_t s_remote = { remote_count, remote_get };
 
 // ---------------------------------------------------------------- latency
 
@@ -276,6 +312,7 @@ static const void* CLAP_ABI plugin_get_extension(const clap_plugin_t*, const cha
     if (!strcmp(id, CLAP_EXT_AUDIO_PORTS)) return &s_audio_ports;
     if (!strcmp(id, CLAP_EXT_LATENCY)) return &s_latency;
     if (!strcmp(id, CLAP_EXT_STATE)) return &s_state;
+    if (!strcmp(id, CLAP_EXT_REMOTE_CONTROLS) || !strcmp(id, CLAP_EXT_REMOTE_CONTROLS_COMPAT)) return &s_remote;
 #ifdef __APPLE__
     if (!strcmp(id, CLAP_EXT_GUI)) return &s_gui;
 #endif

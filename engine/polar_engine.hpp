@@ -16,6 +16,7 @@
 #include <limits>
 #include <utility>
 #include <vector>
+#include "bundled_math.hpp"
 
 namespace polar_recovered {
 namespace engine_detail {
@@ -200,7 +201,7 @@ struct OutputFilter {
         const float r = clamp(resonance, 0.0f, 1.0f);
         if (mode == 3) {
             const float base = mul(divide(44100.0f, sample_rate),
-                                    std::exp(mul(4.852030277252197f, c)));
+                                    bundled::expf(mul(4.852030277252197f, c)));
             for (std::size_t i = 0; i < block_size; ++i) {
                 comb_smooth = add(mul(0.9980000257492065f, comb_smooth),
                                   mul(0.0020000000949949026f, base));
@@ -217,7 +218,7 @@ struct OutputFilter {
         } else {
             const float gain = add(1.0f, mul(-0.6000000238418579f, r));
             const float f0 = std::min(2.0f, mul(divide(44100.0f, sample_rate),
-                                std::exp(sub(mul(4.809999942779541f, c), 3.2920000553131104f))));
+                                bundled::expf(sub(mul(4.809999942779541f, c), 3.2920000553131104f))));
             const float damp = std::max(mul(0.15000000596046448f, f0),
                          std::min(sub(2.0f, mul(0.5f, f0)), sub(2.0f, mul(2.0f, r))));
             const float f = clamp(f0, 0.0f, divide(2.0f, add(1.0f, damp)));
@@ -319,6 +320,12 @@ public:
         // Optional external scalar modulation for host adapters or validation.
         bool external_modulation = false;
         float external_lfo = 0, external_envelope = 0;
+        // Host (DAW) modulation, added after the control smoothers where the LFO and
+        // envelope enter, so it acts at once instead of through the 35 Hz knob smoothing.
+        // Adapter: zero leaves the recovered signal path bit-identical.
+        float pitch_mod_1 = 0, pitch_mod_2 = 0;    // semitones
+        float position_mod = 0;                    // seconds
+        float cutoff_mod = 0, resonance_mod = 0;   // normalized cutoff / resonance units
     };
 
     struct PitchRequest {
@@ -348,6 +355,8 @@ public:
     int lockTransitionSamples() const { return transition_; }
     bool hasPitchRenderer() const { return static_cast<bool>(pitch_renderer_); }
     const PitchOutput& pitchOutput() const { return pitch_output_; }
+    // Host transport sync for the (adapter) LFO: phase in cycles, applied to the next block.
+    void setLfoPhase(double phase) { lfo_phase_ = phase - std::floor(phase); }
     void setPitchRenderer(PitchRenderer renderer) {
         pitch_renderer_ = std::move(renderer); ++reset_generation_;
     }
@@ -527,7 +536,7 @@ inline void PolarEngine::processBlock(const float* input_left, const float* inpu
     default: lfo = static_cast<float>(std::sin(6.2831853071795864769 * phase)); break;
     }
     if (p.external_modulation) lfo = clamp(p.external_lfo, -1.0f, 1.0f);
-    const float lfo_rate = p.lfo_sync ? clamp(p.tempo, 30.0f, 240.0f) / 60.0f * p.division
+    const float lfo_rate = p.lfo_sync ? clamp(p.tempo, 1.0f, 999.0f) / 60.0f * p.division
                                      : clamp(p.lfo_rate, 0.02f, 20.0f);
     lfo_phase_ += static_cast<double>(lfo_rate) * block_size / sample_rate_;
     lfo_phase_ -= std::floor(lfo_phase_);
@@ -537,13 +546,13 @@ inline void PolarEngine::processBlock(const float* input_left, const float* inpu
                              divide(add(p.pitch_1, divide(p.tune_1, 100.0f)), 12.0f));
     const float octave2 = scalar_controls_[pitch2_control].scalar(tick,
                              divide(add(p.pitch_2, divide(p.tune_2, 100.0f)), 12.0f));
-    const float mod1 = divide(add(mul(p.pitch_lfo_1, lfo), mul(p.pitch_env_1, env)), 12.0f);
-    const float mod2 = divide(add(mul(p.pitch_lfo_2, lfo), mul(p.pitch_env_2, env)), 12.0f);
-    const float ratio1 = std::exp(mul(0.6931471824645996f, clamp(add(octave1, mod1), -4.0f, 4.0f)));
-    const float ratio2 = std::exp(mul(0.6931471824645996f, clamp(add(octave2, mod2), -4.0f, 4.0f)));
+    const float mod1 = divide(add(add(mul(p.pitch_lfo_1, lfo), mul(p.pitch_env_1, env)), p.pitch_mod_1), 12.0f);
+    const float mod2 = divide(add(add(mul(p.pitch_lfo_2, lfo), mul(p.pitch_env_2, env)), p.pitch_mod_2), 12.0f);
+    const float ratio1 = bundled::expf(mul(0.6931471824645996f, clamp(add(octave1, mod1), -4.0f, 4.0f)));
+    const float ratio2 = bundled::expf(mul(0.6931471824645996f, clamp(add(octave2, mod2), -4.0f, 4.0f)));
     const float base_position = scalar_controls_[position_control].scalar(tick, p.position);
     const float position = std::min(1.7000000476837158f,
-                   add(add(base_position, mul(p.position_lfo, lfo)), mul(p.position_env, env)));
+                   add(add(add(base_position, mul(p.position_lfo, lfo)), mul(p.position_env, env)), p.position_mod));
     // Deliberately clamp with the PREVIOUS configuration. This ordering is
     // visible at1cdda..1ce83 and matters for the transition block's reset anchor.
     const float offset = clamp(mul(position, sample_rate_), min_offset_, max_offset_);
@@ -555,7 +564,7 @@ inline void PolarEngine::processBlock(const float* input_left, const float* inpu
                              + static_cast<int>(!p.stereo);
     const int speed_index = clamp(p.speed, 0, 2);
     const float loop_seconds = mul(1.0f / 128.0f,
-                                  std::pow(128.0f, clamp(p.loop, 0.0f, 1.0f)));
+                                  bundled::powf(128.0f, clamp(p.loop, 0.0f, 1.0f)));
     const float speed = algorithm >= 2 ? loop_seconds
                         : 0.042663998901844025f / static_cast<float>(1u << speed_index);
     const bool mode_changed = previous_mode_ != internal_mode;
@@ -631,9 +640,10 @@ inline void PolarEngine::processBlock(const float* input_left, const float* inpu
         const float cutoff = scalar_controls_[cutoff_control].scalar(tick,
                          add(-0.30000001192092896f, mul(1.100000023841858f,
                                                      clamp(p.cutoff, 0.0f, 1.0f))));
-        const float resonance = scalar_controls_[resonance_control].scalar(tick,
-                                                     clamp(p.resonance, 0.0f, 1.0f));
-        const float c = add(add(cutoff, mul(p.filter_lfo, lfo)), mul(p.filter_env, env));
+        const float resonance = clamp(add(scalar_controls_[resonance_control].scalar(tick,
+                                    clamp(p.resonance, 0.0f, 1.0f)), p.resonance_mod), 0.0f, 1.0f);
+        const float c = add(add(add(cutoff, mul(p.filter_lfo, lfo)), mul(p.filter_env, env)),
+                            mul(1.100000023841858f, p.cutoff_mod));
         const int filter_mode = clamp(p.filter_mode, 0, 3);
         filters_[0].process(mixed_left.data(), filtered_left.data(), filter_mode, c,
                             resonance, sample_rate_);

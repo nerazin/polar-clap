@@ -98,13 +98,19 @@ extern const ParamDesc kParams[PARAM_COUNT];
 
 // Quantizes + clamps a raw value into the parameter's domain.
 float clampToParam(const ParamDesc& d, float v);
-// Effective value = base + mod, clamped. For stepped kinds this is the value
-// the engine receives (fractional modulation on stepped params is rejected by clamping).
+// Effective value = base + mod, clamped; stepped kinds are rounded by applyToEngine.
 float effectiveValue(const ParamDesc& d, float base, float mod);
-// Writes the effective value into the engine parameter struct.
+// Writes a value into the engine parameter struct.
 void applyToEngine(const ParamDesc& d, EngineParams& p, float value);
-// Applies a whole base[]+mod[] table; returns the effective value written for index.
+// Applies a whole base[]+mod[] table. Pitch, tune, position, cutoff and resonance
+// keep their base value on the engine's smoothed path and receive the (range-clamped)
+// modulation on the engine's post-smoother path; every other parameter gets base + mod.
 void applyAllToEngine(const float* base, const float* mod, EngineParams& p);
+
+// CLAP flags policy: host modulation reaches every parameter except Reset and Bypass.
+bool isModulatable(uint32_t index);
+// Kept for state compatibility, not shown to hosts or in the GUI.
+bool isHidden(uint32_t index);
 
 // Text formatting matching ParamUnit; parse is the inverse (also accepts enum
 // names and on/off). Both clamp to the parameter domain.

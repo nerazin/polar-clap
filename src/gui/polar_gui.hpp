@@ -16,6 +16,7 @@ bool getSize(PolarPlugin& plugin, uint32_t* w, uint32_t* h);
 bool setSize(PolarPlugin& plugin, uint32_t w, uint32_t h);
 bool setParent(PolarPlugin& plugin, const void* nsView); // NSView*
 bool show(PolarPlugin& plugin, bool shown);
+bool snapshot(PolarPlugin& plugin, const char* pngPath);  // tests: render the panel to a PNG
 
 } // namespace gui
 } // namespace polar_clap

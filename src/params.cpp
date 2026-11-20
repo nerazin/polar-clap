@@ -7,7 +7,9 @@
 
 namespace polar_clap {
 
-static const char* kAlgoEnums[] = {"Spectral", "Periodic", "Forward", "Reverse", nullptr};
+// Display names follow the original panel (values unchanged: 0 FFT spectral, 1 FFT
+// periodic, 2 forward granular, 3 reverse granular).
+static const char* kAlgoEnums[] = {"Smooth", "Classic", "Loop", "Rev Loop", nullptr};
 static const char* kSpeedEnums[] = {"Slow", "Medium", "Fast", nullptr};
 static const char* kFilterEnums[] = {"LP", "BP", "HP", "Comb", nullptr};
 static const char* kWaveEnums[] = {"Sine", "Triangle", "Saw", "Square", nullptr};
@@ -54,7 +56,7 @@ const ParamDesc kParams[PARAM_COUNT] = {
     // --- LFO ---
     {"lfo_rate", "LFO Rate", "Rate", "LFO", 0.02f, 20, 0.30f, kFloat, U_HZ, nullptr, &EngineParams::lfo_rate, nullptr, nullptr},
     {"lfo_sync", "LFO Sync", "Sync", "LFO", 0, 1, 0, kBool, U_NONE, nullptr, nullptr, nullptr, &EngineParams::lfo_sync},
-    {"tempo", "Tempo", "Tempo", "LFO", 40, 250, 120, kFloat, U_BPM, nullptr, &EngineParams::tempo, nullptr, nullptr},
+    {"tempo", "Fallback Tempo", "Tempo", "LFO", 40, 250, 120, kFloat, U_BPM, nullptr, &EngineParams::tempo, nullptr, nullptr},
     {"division", "LFO Division", "Div", "LFO", 0.25f, 8, 1, kFloat, U_NONE, nullptr, &EngineParams::division, nullptr, nullptr},
     {"lfo_wave", "LFO Wave", "Wave", "LFO", 0, 3, 0, kInt, U_NONE, kWaveEnums, nullptr, &EngineParams::lfo_wave, nullptr},
     {"lfo_phase", "LFO Phase", "Phase", "LFO", 0, 1, 0, kFloat, U_PERCENT, nullptr, &EngineParams::lfo_phase, nullptr, nullptr},
@@ -108,10 +110,37 @@ void applyToEngine(const ParamDesc& d, EngineParams& p, float value) {
 }
 
 void applyAllToEngine(const float* base, const float* mod, EngineParams& p) {
+    // Modulation offset, limited so base + offset stays inside the parameter range. The
+    // host's amount passes through exactly unless the range limit applies.
+    auto offset = [&](int i) {
+        const float b = clampToParam(kParams[i], base[i]), sum = b + mod[i];
+        return sum == clampToParam(kParams[i], sum) ? mod[i] : clampToParam(kParams[i], sum) - b;
+    };
     for (int i = 0; i < PARAM_COUNT; ++i) {
         const ParamDesc& d = kParams[i];
-        applyToEngine(d, p, effectiveValue(d, base[i], mod[i]));
+        switch (i) {
+            case P_PITCH_1: case P_TUNE_1: case P_PITCH_2: case P_TUNE_2:
+            case P_POSITION: case P_CUTOFF: case P_RESONANCE:
+                applyToEngine(d, p, base[i]);
+                break;
+            default:
+                applyToEngine(d, p, effectiveValue(d, base[i], mod[i]));
+                break;
+        }
     }
+    p.pitch_mod_1 = offset(P_PITCH_1) + offset(P_TUNE_1) / 100.0f;
+    p.pitch_mod_2 = offset(P_PITCH_2) + offset(P_TUNE_2) / 100.0f;
+    p.position_mod = offset(P_POSITION);
+    p.cutoff_mod = offset(P_CUTOFF);
+    p.resonance_mod = offset(P_RESONANCE);
+}
+
+bool isModulatable(uint32_t index) {
+    return index < (uint32_t)PARAM_COUNT && index != P_RESET && index != P_BYPASS;
+}
+
+bool isHidden(uint32_t index) {
+    return index == P_EXTERNAL_MOD || index == P_EXTERNAL_LFO || index == P_EXTERNAL_ENV;
 }
 
 bool formatValue(const ParamDesc& d, double v, char* out, size_t cap) {
@@ -140,7 +169,10 @@ bool formatValue(const ParamDesc& d, double v, char* out, size_t cap) {
         case U_MS:    snprintf(out, cap, "%.1f ms", q); break;
         case U_HZ:    snprintf(out, cap, "%.2f Hz", q); break;
         case U_DB:    snprintf(out, cap, "%+.1f dB", q); break;
-        case U_SEC:   snprintf(out, cap, "%.3f s", q); break;
+        case U_SEC:
+            if (std::fabs(q) < 1.0f) snprintf(out, cap, "%.0f ms", q * 1000.f);
+            else snprintf(out, cap, "%.2f s", q);
+            break;
         case U_BPM:   snprintf(out, cap, "%.1f BPM", q); break;
         case U_PAN: {
             float p2 = clampToParam(d, q);
@@ -200,6 +232,7 @@ bool parseValue(const ParamDesc& d, const char* text, double* out) {
     }
     double v = strtod(text, &end);
     if (end == text) return false;
+    if (d.unit == U_SEC && strstr(end, "ms")) v /= 1000.0;  // matches the "200 ms" display
     // percent-style input for 0..1 parameters: "75 %" or "75%"
     if ((d.unit == U_PERCENT || d.unit == U_DEPTH || d.unit == U_PAN) &&
         (fabs(v) > 1.0001 || strchr(text, '%'))) {

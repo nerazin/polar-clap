@@ -27,7 +27,6 @@ bool PolarPlugin::init() {
         base_[i].store(kParams[i].def, std::memory_order_relaxed);
         mod_[i].store(0.0f, std::memory_order_relaxed);
         ui_[i].store(kParams[i].def, std::memory_order_relaxed);
-        dirty_[i].store(false, std::memory_order_relaxed);
     }
     applyAllToEngine(base, mod, processor_.parameters());
     if (host_ && host_->get_extension)
@@ -47,6 +46,7 @@ PolarPlugin::~PolarPlugin() {
 
 void PolarPlugin::activateMain(double sampleRate) {
     if (sampleRate > 0 && sampleRate < 4000000) {
+        sampleRate_ = sampleRate;
         try {
             processor_.sampleRate((float)sampleRate);
         } catch (...) {
@@ -78,69 +78,80 @@ void PolarPlugin::resetEngine() {
 
 // ---------------------------------------------------------------- params
 
+void PolarPlugin::requestFlush() {
+    if (hostParams_ && hostParams_->request_flush) hostParams_->request_flush(host_);
+}
+
+void PolarPlugin::uiBeginGesture(uint32_t index) {
+    if (index >= (uint32_t)PARAM_COUNT) return;
+    guiEvents_.push({(uint16_t)CLAP_EVENT_PARAM_GESTURE_BEGIN, index, 0.f});
+    requestFlush();
+}
+
 void PolarPlugin::uiSetValue(uint32_t index, float value) {
     if (index >= (uint32_t)PARAM_COUNT) return;
-    const ParamDesc& d = kParams[index];
-    float v = clampToParam(d, value);
-    base_[index].store(v, std::memory_order_relaxed);
-    dirty_[index].store(true, std::memory_order_relaxed);
-    if (hostParams_ && hostParams_->request_flush)
-        hostParams_->request_flush(host_);
+    const float v = clampToParam(kParams[index], value);
+    base_[index].store(v, std::memory_order_relaxed);  // the engine follows at once
+    if (index == (uint32_t)P_RESET && v >= 0.5f) resetPending_ = true;
+    guiEvents_.push({(uint16_t)CLAP_EVENT_PARAM_VALUE, index, v});
+    requestFlush();
+}
+
+void PolarPlugin::uiEndGesture(uint32_t index) {
+    if (index >= (uint32_t)PARAM_COUNT) return;
+    guiEvents_.push({(uint16_t)CLAP_EVENT_PARAM_GESTURE_END, index, 0.f});
+    requestFlush();
+}
+
+void PolarPlugin::uiTap(uint32_t index, float value) {
+    uiBeginGesture(index);
+    uiSetValue(index, value);
+    uiEndGesture(index);
 }
 
 void PolarPlugin::handleEvent(const clap_event_header_t* ev) {
-    if (ev->type != CLAP_EVENT_PARAM_VALUE && ev->type != CLAP_EVENT_PARAM_MOD) return;
-    const clap_event_param_value_t* pv = nullptr;
-    const clap_event_param_mod_t* pm = nullptr;
-    clap_id id = 0;
-    double value = 0;
-    if (ev->type == CLAP_EVENT_PARAM_VALUE) {
-        pv = reinterpret_cast<const clap_event_param_value_t*>(ev);
-        id = pv->param_id;
-        value = pv->value;
-    } else {
-        pm = reinterpret_cast<const clap_event_param_mod_t*>(ev);
-        id = pm->param_id;
-        value = pm->amount;
-    }
-    if (id >= (clap_id)PARAM_COUNT) return;
-    const uint32_t index = (uint32_t)id;
-    const ParamDesc& d = kParams[index];
+    if (ev->space_id != CLAP_CORE_EVENT_SPACE_ID) return;
     if (ev->type == CLAP_EVENT_PARAM_MOD) {
-        if (d.kind == kFloat)
-            mod_[index].store((float)value, std::memory_order_relaxed);
-        else
-            mod_[index].store(0.0f, std::memory_order_relaxed); // stepped: no fractional mod
+        const auto* pm = reinterpret_cast<const clap_event_param_mod_t*>(ev);
+        if (pm->param_id >= (clap_id)PARAM_COUNT || !isModulatable(pm->param_id)) return;
+        // Global modulation only: this is an effect without voices, so any
+        // note/channel-specific amount also applies to the whole device.
+        mod_[pm->param_id].store(std::isfinite(pm->amount) ? (float)pm->amount : 0.f, std::memory_order_relaxed);
         return;
     }
+    if (ev->type != CLAP_EVENT_PARAM_VALUE) return;
+    const auto* pv = reinterpret_cast<const clap_event_param_value_t*>(ev);
+    if (pv->param_id >= (clap_id)PARAM_COUNT || !std::isfinite(pv->value)) return;
+    const uint32_t index = (uint32_t)pv->param_id;
+    const ParamDesc& d = kParams[index];
     if (d.kind == kTrigger) {
-        if (value >= 0.5) {
+        if (pv->value >= 0.5) {
             if (!resetLatched_) { resetPending_ = true; resetLatched_ = true; }
         } else {
             resetLatched_ = false;
         }
-        base_[index].store(clampToParam(d, (float)value), std::memory_order_relaxed);
-        return;
     }
-    base_[index].store(clampToParam(d, (float)value), std::memory_order_relaxed);
-    dirty_[index].store(false, std::memory_order_relaxed); // host knows this value
+    base_[index].store(clampToParam(d, (float)pv->value), std::memory_order_relaxed);
 }
 
-void PolarPlugin::emitDirtyValues(const clap_output_events_t* out) {
-    if (!out || !out->try_push) return;
-    for (int i = 0; i < PARAM_COUNT; ++i) {
-        if (!dirty_[i].load(std::memory_order_relaxed)) continue;
-        dirty_[i].store(false, std::memory_order_relaxed);
-        clap_event_param_value_t ev{};
-        ev.header.size = sizeof(ev);
-        ev.header.time = 0;
-        ev.header.space_id = CLAP_CORE_EVENT_SPACE_ID;
-        ev.header.type = CLAP_EVENT_PARAM_VALUE;
-        ev.header.flags = 0;
-        ev.param_id = (clap_id)i;
-        ev.cookie = (void*)(uintptr_t)i;
-        ev.value = (double)base_[i].load(std::memory_order_relaxed);
-        out->try_push(out, &ev.header);
+void PolarPlugin::emitGuiEvents(const clap_output_events_t* out) {
+    GuiEvent e;
+    while (guiEvents_.pop(e)) {
+        if (!out || !out->try_push) continue;
+        if (e.type == CLAP_EVENT_PARAM_VALUE) {
+            clap_event_param_value_t ev{};
+            ev.header = {sizeof(ev), 0, CLAP_CORE_EVENT_SPACE_ID, CLAP_EVENT_PARAM_VALUE, 0};
+            ev.param_id = e.param;
+            ev.cookie = nullptr;
+            ev.note_id = -1; ev.port_index = -1; ev.channel = -1; ev.key = -1;  // global, not per note
+            ev.value = (double)e.value;
+            out->try_push(out, &ev.header);
+        } else {
+            clap_event_param_gesture_t ev{};
+            ev.header = {sizeof(ev), 0, CLAP_CORE_EVENT_SPACE_ID, e.type, 0};
+            ev.param_id = e.param;
+            out->try_push(out, &ev.header);
+        }
     }
 }
 
@@ -149,7 +160,7 @@ void PolarPlugin::flushParams(const clap_input_events_t* in, const clap_output_e
         uint32_t n = in->size(in);
         for (uint32_t e = 0; e < n; ++e) handleEvent(in->get(in, e));
     }
-    emitDirtyValues(out);
+    emitGuiEvents(out);
 }
 
 // ---------------------------------------------------------------- audio
@@ -167,19 +178,19 @@ static void applyParams(PolarPlugin& pl) {
         }
         pl.resetPending_ = false;
     }
+    float base[PARAM_COUNT], mod[PARAM_COUNT];
+    for (int i = 0; i < PARAM_COUNT; ++i) {
+        base[i] = pl.base_[i].load(std::memory_order_relaxed);
+        mod[i] = pl.mod_[i].load(std::memory_order_relaxed);
+    }
+    applyAllToEngine(base, mod, ep);
     for (int i = 0; i < PARAM_COUNT; ++i) {
         const ParamDesc& d = kParams[i];
-        if (d.kind == kTrigger) {
-            pl.ui_[i].store(pl.base_[i].load(std::memory_order_relaxed) >= 0.5f ? 1.f : 0.f,
-                            std::memory_order_relaxed);
-            continue;
-        }
-        float v = effectiveValue(d, pl.base_[i].load(std::memory_order_relaxed),
-                                   pl.mod_[i].load(std::memory_order_relaxed));
-        applyToEngine(d, ep, v);
+        float v = effectiveValue(d, base[i], mod[i]);
+        if (d.kind == kInt) v = std::round(v);
+        else if (d.kind != kFloat) v = v >= 0.5f ? 1.f : 0.f;
         pl.ui_[i].store(v, std::memory_order_relaxed);
     }
-    pl.ui_[(int)P_BYPASS].store(ep.bypass ? 1.f : 0.f, std::memory_order_relaxed);
 }
 
 void PolarPlugin::process(const clap_process_t* pr) {
@@ -203,6 +214,16 @@ void PolarPlugin::process(const clap_process_t* pr) {
     if (!outL) return;
     if (!inL) { /* free-running render: feed silence */ }
 
+    emitGuiEvents(pr->out_events);
+
+    // Host transport drives the LFO's tempo sync: host tempo replaces the fallback
+    // Tempo parameter, and while playing the phase locks to the song position.
+    const clap_event_transport_t* tr = pr->transport;
+    const bool hostTempo = tr && (tr->flags & CLAP_TRANSPORT_HAS_TEMPO) && tr->tempo > 0;
+    const bool beatLock = hostTempo && (tr->flags & CLAP_TRANSPORT_HAS_BEATS_TIMELINE) &&
+                          (tr->flags & CLAP_TRANSPORT_IS_PLAYING);
+    const double beat0 = beatLock ? (double)tr->song_pos_beats / (double)CLAP_BEATTIME_FACTOR : 0.0;
+
     const uint32_t evCount = pr->in_events ? pr->in_events->size(pr->in_events) : 0;
     uint32_t ev = 0;
 
@@ -220,6 +241,14 @@ void PolarPlugin::process(const clap_process_t* pr) {
                 handleEvent(e);
             }
             applyParams(*this);
+            auto& ep = processor_.parameters();
+            if (hostTempo) ep.tempo = (float)tr->tempo;
+            tempo_.store(ep.tempo, std::memory_order_relaxed);
+            if (beatLock && ep.lfo_sync) {
+                // Beat at the first input frame of this engine block (may lie in the previous buffer).
+                const double beat = beat0 + ((double)i - 63.0) / sampleRate_ * tr->tempo / 60.0;
+                processor_.setLfoPhase(beat * (double)ep.division);
+            }
             float bl[64], br[64];
             bool ok = true;
             try {
@@ -312,13 +341,12 @@ bool PolarPlugin::loadState(const clap_istream_t* s) {
         cursor = nl + 1;
     }
     // Any parameter absent from the chunk reverts to its default.
-    for (int i = 0; i < PARAM_COUNT; ++i) {
+    for (int i = 0; i < PARAM_COUNT; ++i)
         if (!touched[i])
             base_[i].store(kParams[i].def, std::memory_order_relaxed);
-        dirty_[i].store(true, std::memory_order_relaxed);
-    }
-    mod_[(int)P_RESET].store(0.f, std::memory_order_relaxed);
-    if (hostParams_ && hostParams_->request_flush) hostParams_->request_flush(host_);
+    base_[(int)P_RESET].store(0.f, std::memory_order_relaxed);
+    // state.load runs on the main thread: tell the host to re-read every value.
+    if (hostParams_ && hostParams_->rescan) hostParams_->rescan(host_, CLAP_PARAM_RESCAN_VALUES);
     return true;
 }
 

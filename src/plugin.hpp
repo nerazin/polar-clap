@@ -14,6 +14,31 @@ namespace polar_clap {
 // the wrapper pre-fills its output ring with 64 frames on activation.
 static constexpr uint32_t kLatencyFrames = 64;
 
+// GUI -> audio thread: parameter gestures and values the host must hear about.
+// Single producer (main thread), single consumer (process or flush).
+struct GuiEvent { uint16_t type; uint32_t param; float value; };
+class GuiEventQueue {
+public:
+    bool push(const GuiEvent& e) {
+        const uint32_t w = write_.load(std::memory_order_relaxed);
+        if (w - read_.load(std::memory_order_acquire) >= kSize) return false;
+        items_[w % kSize] = e;
+        write_.store(w + 1, std::memory_order_release);
+        return true;
+    }
+    bool pop(GuiEvent& e) {
+        const uint32_t r = read_.load(std::memory_order_relaxed);
+        if (r == write_.load(std::memory_order_acquire)) return false;
+        e = items_[r % kSize];
+        read_.store(r + 1, std::memory_order_release);
+        return true;
+    }
+private:
+    static constexpr uint32_t kSize = 1024;
+    GuiEvent items_[kSize]{};
+    std::atomic<uint32_t> write_{0}, read_{0};
+};
+
 class PolarPlugin {
 public:
     // Creates the CLAP C object; returns null on allocation failure.
@@ -30,12 +55,19 @@ public:
     const ParamDesc& desc(uint32_t index) const { return kParams[index]; }
     // Effective value (base + current modulation) as last seen by the engine.
     float uiValue(uint32_t index) const { return ui_[index].load(std::memory_order_relaxed); }
-    // Current modulation offset for the UI ring display.
+    // Current host modulation offset for the UI ring display.
     float uiMod(uint32_t index) const { return mod_[index].load(std::memory_order_relaxed); }
     float uiBase(uint32_t index) const { return base_[index].load(std::memory_order_relaxed); }
-    // Sets the base value from the GUI (main thread), marks it dirty for the
-    // next params_flush and asks the host to pick it up.
+    // Edits from the GUI. Wrap value changes in begin/end so hosts record them as
+    // one gesture; uiTap sends begin, value and end for clicks and toggles.
+    void uiBeginGesture(uint32_t index);
     void uiSetValue(uint32_t index, float value);
+    void uiEndGesture(uint32_t index);
+    void uiTap(uint32_t index, float value);
+    // Reset Capture from the GUI: a momentary action, not a host-visible value change.
+    void uiTriggerReset() { resetPending_.store(true); }
+    // Tempo the LFO uses (host tempo when the host provides it).
+    float uiTempo() const { return tempo_.load(std::memory_order_relaxed); }
 
     polar_recovered::PolarProcessor& processor() { return processor_; }
     const clap_host_t* host() const { return host_; }
@@ -64,7 +96,8 @@ public:
     bool loadState(const clap_istream_t* s);
 
     void handleEvent(const clap_event_header_t* ev);
-    void emitDirtyValues(const clap_output_events_t* out);
+    void emitGuiEvents(const clap_output_events_t* out);
+    void requestFlush();
 
     polar_recovered::PolarProcessor processor_{48000.0f};
     const clap_host_t* host_ = nullptr;
@@ -74,7 +107,8 @@ public:
     std::atomic<float> base_[PARAM_COUNT]{};
     std::atomic<float> mod_[PARAM_COUNT]{};
     std::atomic<float> ui_[PARAM_COUNT]{};       // effective values published per block
-    std::atomic<bool> dirty_[PARAM_COUNT]{};     // base changed outside process()
+    GuiEventQueue guiEvents_;
+    std::atomic<float> tempo_{120.0f};
 
     // 64-frame input carry (engine contract: exactly 64 samples per call).
     float carryL_[64]{}, carryR_[64]{};
@@ -83,8 +117,9 @@ public:
     // reports a constant 64-frame latency.
     float ringL_[128]{}, ringR_[128]{};
     int ringHead_ = 0, ringLen_ = 0;
+    double sampleRate_ = 48000.0;
 
-    bool resetPending_ = false;  // engine reset queued for the next block
+    std::atomic<bool> resetPending_{false};  // engine reset queued for the next block (GUI or host)
     bool resetLatched_ = false;  // trigger re-arm latch
     bool processing_ = false;
     bool failed_ = false;        // engine threw; emit silence

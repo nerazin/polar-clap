@@ -1,18 +1,19 @@
 # Polar Reconstruction — CLAP plugin
 
-A CLAP audio plugin wrapping the recovered **Polar** DSP engine (Polar
-reconstruction 0.2): spectral and periodic FFT pitch shifting, forward and
-reverse granular playback, dual pitch voices with feedback, filtering, LFO
-and envelope modulation — the same C++17 engine as the Pure Data external,
-now loadable directly as an instrument-effect device in Bitwig Studio and
-other CLAP hosts.
+A CLAP audio plugin wrapping the recovered **Polar** DSP engine: the Smooth
+(phase-vocoder) and Classic (period-splice) FFT pitch shifters, forward and
+reverse granular Loop modes, dual shifters with feedback, filter, LFO and
+envelope. The Smooth and Classic cores, and every math routine they share with
+the original, are checked bit-for-bit against the original binary (see
+*Accuracy*).
 
 - **Plugin ID:** `com.polar-reconstruction.polar`
-- **Version:** 0.2.0
+- **Version:** 0.3.0
 - **Ports:** stereo in / stereo out
 - **Latency:** constant 64 samples (reported to the host; Bitwig compensates)
-- **GUI:** built-in macOS Cocoa panel (knob grid); Bitwig's generic panel
-  shows the same parameters grouped by module
+- **GUI:** built-in macOS Cocoa panel laid out like the original (Algorithm,
+  Delay Buffer, two Shifters, Dry Signal, Envelope, LFO, Filter); Bitwig also
+  gets six remote-control pages
 
 ## Build & install (macOS, Apple Silicon)
 
@@ -58,7 +59,10 @@ Uninstall: `rm -rf ~/Library/Audio/Plug-Ins/CLAP/"Polar Reconstruction.clap"`
 3. Let audio flow for a moment (the engine captures up to 3 seconds), then
    change **Pitch**, switch **Algorithm**, or engage **Lock** to freeze the
    captured material.
-4. Every float parameter accepts Bitwig modulators (see *Modulation* below).
+4. Every parameter except Reset and Bypass accepts Bitwig modulators, switches
+   and menus included (see *Modulation* below). The six remote-control pages
+   (Main, Shifters, Feedback & Delay, Filter, LFO, Envelope) put the useful
+   targets on the device's 8 knobs.
 
 ## Troubleshooting
 
@@ -89,129 +93,137 @@ actually loads the binary after installing.
 
 ## Controls
 
-All values take effect at the next 64-sample boundary, exactly like the
-original Pd panel. Group = CLAP module / GUI section.
+Controls take effect at the next 64-sample boundary, like the original (Reason
+renders in 64-frame batches). Host names are unchanged from 0.2, so saved
+projects and automation still load; the GUI uses the original panel's labels.
 
-| Group | Parameter | Range / values |
+| GUI section | Control (host name) | Range / values |
 | --- | --- | --- |
-| Algorithm | Algorithm | Spectral · Periodic · Forward · Reverse |
-| Algorithm | FFT Speed | Slow · Medium · Fast |
-| Algorithm | Force Reverse | on/off (compat: algorithm 2 → 3) |
-| Algorithm | Stereo | on/off capture |
-| Algorithm | Lock Capture | on/off |
-| Algorithm | Reset Capture | trigger: clears buffer + running state |
-| Grain | Position | 0 … 1.7 s |
-| Grain | Loop Length | 0 … 1 (normalized; ~7.8 ms … 1 s exponential) |
-| Grain | Position LFO / Env | ±0.5 s modulation depth |
-| Voice 1 | Pitch 1 | ±36 st |
-| Voice 1 | Tune 1 | ±100 ct |
-| Voice 1 | Level 1 | 0 … 100 % |
-| Voice 1 | Pan 1 | L … R |
-| Voice 1 | Feedback 1 | 0 … 99 % |
-| Voice 1 | Pitch LFO / Env 1 | ±24 st modulation depth |
-| Voice 2 | Enable Voice 2 | on/off |
-| Voice 2 | Pitch 2 | ±36 st (default +7) |
-| Voice 2 | Tune 2 | ±100 ct |
-| Voice 2 | Level 2 | 0 … 100 % |
-| Voice 2 | Pan 2 | L … R |
-| Voice 2 | Feedback 2 | 0 … 99 % |
-| Voice 2 | Delay 2 | 0 … 1000 ms |
-| Voice 2 | Pitch LFO / Env 2 | ±24 st modulation depth |
-| Filter | Filter On / Mode | LP · BP · HP · Comb |
-| Filter | Cutoff / Resonance | 0 … 100 % (normalized) |
-| Filter | Filter LFO / Env | ±100 % modulation depth |
-| LFO | Rate | 0.02 … 20 Hz |
-| LFO | Sync | on/off (uses manual Tempo/Division; no DAW transport link) |
-| LFO | Tempo / Division | 40 … 250 BPM / 0.25 … 8 cyc-per-beat |
-| LFO | Wave | Sine · Triangle · Saw · Square |
-| LFO | Phase / Pan LFO | 0 … 100 % / 0 … 100 % depth |
-| Envelope | Gate | on/off (manual ADSR gate) |
-| Envelope | Attack / Decay / Release | 0 … 2 s |
-| Envelope | Sustain | 0 … 100 % |
-| Envelope | Env to Amp | 0 … 100 % |
-| Output | Dry / Dry Delay | 0 … 100 % / 0 … 1000 ms |
-| Output | Output | −60 … +6 dB |
-| Output | Bypass | on/off — passes input while processing continues |
-| External | External Mod / LFO / Env | block-rate external scalar inputs (parity with the Pd panel) |
+| Algorithm | Slow · Med · Fast (FFT Speed) | FFT window 42.7 / 21.3 / 10.7 ms; Smooth and Classic only |
+| Algorithm | Smooth · Classic · Loop · Rev Loop (Algorithm) | FFT spectral · FFT period · forward grains · reverse grains |
+| Algorithm | Length (Loop Length) | 0 … 1 → 7.8 ms … 1 s, exponential; Loop modes only |
+| Delay Buffer | Lock (Lock Capture), Delay (Position), Stereo | freeze capture; 0 … 1.7 s behind the input; stereo or summed |
+| Delay Buffer | LFO, Env (Position LFO / Env) | ±0.5 s depth |
+| Shifter 1 / 2 | Shift, Fine (Pitch, Tune) | ±36 st, ±100 ct |
+| Shifter 1 / 2 | F.Back, Pan, Volume (Feedback, Pan, Level) | 0 … 99 %, L … R, 0 … 100 % |
+| Shifter 1 / 2 | LFO, Env (Pitch LFO / Env) | ±24 st depth |
+| Shifter 2 | enable LED, Delay (Enable Voice 2, Delay 2) | on/off, 0 … 1000 ms |
+| Dry Signal | Delay, Volume (Dry Delay, Dry) | 0 … 1000 ms, 0 … 100 % |
+| Envelope | Gate, A D S R, Amp (Env to Amp) | manual gate; 0 … 2 s, 0 … 100 % |
+| LFO | Rate, Cyc/Beat (Division), Phase, Pan (Pan LFO Depth) | 0.02 … 20 Hz free; 0.25 … 8 cycles per beat synced |
+| LFO | Sine · Tri · Saw · Sqr (LFO Wave), Sync (LFO Sync) | waveform; tempo sync |
+| Filter | enable LED, Freq (Cutoff), Res, LP · BP · HP · Comb | 0 … 100 % |
+| Filter | LFO, Env (Filter LFO / Env) | ±100 % depth |
+| Output | Output, Reset (Reset Capture), Bypass | −60 … +6 dB; clears the buffer; passes input |
 
-Behaviour notes:
+Cyan knobs are internal LFO/envelope depths: the one LFO and envelope reach the
+delay position, both shifters' pitch, the filter, the pan and the amplitude.
 
-- **Modulation.** Stepped parameters (switches, enums) do not accept
-  fractional modulation, matching the engine's integer controls. All float
-  parameters report `IS_MODULATABLE`; the mod amount is added to the base
-  value and clamped to the parameter range. The GUI draws modulation as a
-  violet arc around the knob.
+Not in the GUI: *Force Reverse* (old alias of Rev Loop), *Fallback Tempo* (used
+only when the host sends no tempo) and the three hidden *External* parameters
+(kept for state compatibility).
+
+### Modulation (Bitwig and other CLAP hosts)
+
+- **Everything modulates.** All parameters except Reset and Bypass report
+  `CLAP_PARAM_IS_MODULATABLE`. Stepped ones (algorithm, speed, filter mode,
+  wave, switches) round base + amount, so a Bitwig modulator can switch modes.
+- **Modulation acts at once.** Knob moves and automation go through the
+  original's 35 Hz control smoothers, as in Reason. Host modulation of Shift,
+  Fine, Delay (position), Freq and Res is added *after* those smoothers, at the
+  point where the internal LFO and envelope enter, so fast modulators are not
+  low-pass filtered. Levels, pans, feedback and delays stay on the per-sample
+  gain smoothers to avoid zipper noise. With no modulation the signal path is
+  bit-identical to the recovered one.
+- **Ranges hold.** base + amount is limited to the parameter range; the
+  internal LFO/envelope and host modulation add up.
+- **GUI edits are gestures.** Dragging a knob sends gesture begin, values and
+  gesture end, from `process()` while audio runs and from `flush()` otherwise,
+  so Bitwig records automation and its own knobs follow. The GUI draws host
+  modulation as a violet arc and dot (switches: a violet outline).
+- **Tempo.** LFO Sync follows the host tempo, and while the transport plays the
+  LFO phase locks to the song position (Division cycles per beat plus Phase).
+
+### Other behaviour
+
 - **Bypass** follows the CLAP bypass parameter: audio passes through while
-  the engine keeps processing (preserving the captured buffer), identical to
-  the original panel's bypass.
+  the engine keeps processing (preserving the captured buffer).
 - **Host transport resets are ignored** on purpose: the capture buffer holds
-  audio material, not timeline state. Use *Reset Capture* to clear it.
-- **State.** Project state (all parameters) is saved and restored with the
-  Bitwig project / presets. Runtime capture content is intentionally not
-  part of the state chunk.
-- **Failure safety.** Any internal engine exception results in silence for
-  that block rather than a host crash; the engine retries on the next block.
+  audio material, not timeline state. Use *Reset* to clear it.
+- **State.** All parameters are saved with the project; the host is asked to
+  re-read values after a load. Captured audio is not part of the state.
+- **Failure safety.** An internal engine exception gives silence for that
+  block rather than a host crash; the engine retries on the next block.
 
-## Validation
+## Accuracy
 
-The wrapper was developed and validated on Linux against the engine directly
-(the DSP code is platform-independent C++17; only the GUI layer is
-macOS-specific and was reviewed but not executed here):
+The original x86-64 Polar binary was run under an instrumented loader (Rosetta on
+an Apple Silicon Mac; the lab harness is private and not in this repository) next
+to this engine. Comparisons are bitwise; "differ" counts any changed bit.
 
-- **Entry-point loading:** the black-box harness resolves the plugin through
-  `dlsym("clap_entry")` — the exact symbol name real hosts look up — so a
-  wrongly-named entry symbol fails the suite instead of passing.
-- **Bit-exact equivalence:** the plugin, loaded through the plain CLAP C ABI
-  (`dlopen` + factory) with random host buffer sizes (1 … 700 frames),
-  parameter events at arbitrary sample offsets, param-mod events, bypass
-  toggles and reset triggers, produces **bit-identical** output to a direct
-  instance of `PolarProcessor` driven in exact 64-sample blocks — across a
-  30-second randomized soak (1.44 M frames) plus scripted scenarios
-  (silence, defaults, algorithm/speed/window changes, lock transitions,
-  filter modes, dual voices, feedback, dry path, output gain changes).
-- **Parameter table** cross-checked against the engine's public
-  `set(name, value)` string API (bit-exact audio after identical input).
-- **State round-trip**, parameter text formatting/parsing, params_flush
-  dirty tracking, latency (64) and stereo port declaration all covered by
-  automated tests.
-- **Address/UB sanitizers** pass on the full suite (LeakSanitizer disabled
-  in this environment).
-- **Original engine test suite** (`test_engine`, `test_complete`,
-  `test_transition_reference` from the Polar reconstruction archive) passes
-  against the `engine/` sources in this project, confirming they are
-  unchanged.
+| Check | Result |
+| --- | --- |
+| Bundled `expf`, every 32-bit input (4,294,967,296) | 0 differ |
+| Bundled `atanf`, every 32-bit input | 0 differ |
+| Bundled `cosf`, every input with \|x\| ≤ 2⁷·π/2 (2,257,723,138) | 0 differ |
+| Bundled `powf(128, t)`, every t in [0, 1] (1,065,353,217) | 0 differ |
+| Bundled `powf`, `atan2f`, `sin`/`cos`, 650 M random inputs | 0 differ |
+| FFT trig, Hann and fade tables generated at start-up (74,432 entries) | equal to the original's |
+| Same math on arm64 and x86-64 (exhaustive hashes) | identical (NaN payloads aside) |
+| Smooth (FFT0) core, randomized controls, all mono/stereo × 1/2-voice variants, 44.1/48/96 kHz, every state word compared | 480,000 blocks, 0 differ |
+| Classic (FFT1) core, same stimulus | 480,000 blocks, 0 differ |
+| Harness can fail: a 1-ulp change in one constant | caught in block 0–1 |
+| `polar_golden_test`: the original's math (hashes taken by running the original) and tables, no binary needed | pass (a planted 1-ulp `expf` change fails it) |
+| `polar_clap_test`: plugin through the CLAP ABI vs the engine in exact 64-frame blocks, random buffer sizes, events, modulation, 30 s soak | bit-identical |
+| `polar_whitebox_test`: gestures, event ids, modulation routing, host tempo, text formats | pass |
+| All tests with `-fsanitize=address,undefined`, and as an Intel build under Rosetta | pass |
 
-To run the same suite on Linux:
+Why the math matters: the original carries its own (newlib fdlibm) math library.
+A platform `expf`/`atan2f`/`powf` differs from it in 10–14 % of results, which
+moved about 10 % of pitch settings by one float step and made the Smooth core
+drift from the original from its first analysis frame. `engine/bundled_math.hpp`
+is the ported library; the engine no longer calls `<cmath>` where the original
+used its own routines.
+
+### Not verified
+
+- The FFT itself: Reason supplies it to the device and it was not measured. Both
+  sides of every comparison above use this engine's binary64 radix-2 transform.
+  The SDK documents size (log2 N), the packed N/2 complex pairs and the 1/N
+  forward scaling; it does not document where Nyquist sits, the sign convention
+  or the arithmetic. A different but correct float FFT in the original's own code
+  changes Classic's period choices within seconds and Smooth by −50 … −72 dBFS,
+  so sample identity with real Reason output is not established.
+- Granular Loop/Rev Loop, the filters, feedback clipper, delays, pan, dry path and
+  the whole engine graph were recovered from the disassembly and tested against
+  references, not executed against the original.
+- LFO, envelope, public units and defaults are authored adapters, not original.
+- Not yet tested inside Bitwig or another DAW; no real Reason renders were compared.
+
+## Tests
 
 ```sh
 cmake -B build-test -DBUILD_TESTING=ON -DCMAKE_BUILD_TYPE=Release
 cmake --build build-test
+./build-test/polar_golden_test
 ./build-test/polar_whitebox_test
-./build-test/polar_clap_test build-test/libPolarReconstruction.clap
+./build-test/polar_clap_test build-test/PolarReconstruction.clap/Contents/MacOS/PolarReconstruction   # Linux: build-test/PolarReconstruction.clap
+./build-test/polar_gui_snapshot panel.png modulated   # macOS: render the GUI to a PNG
 ```
-
-macOS-specific (Cocoa GUI, bundle packaging, code signing) was built to
-Apple's documented APIs but could not be executed in this Linux
-environment; if anything looks off, file the symptom alongside
-`build-mac.sh` output.
 
 ## Scope
 
-This wraps the independently reconstructed engine ("Polar reconstruction
-0.2"). Per that project's README: the FFT comparisons were validated
-conditional on the shared FFT adapter and do not establish full Reason-host
-equivalence; the packed `Polar.data` resources, original factory presets
-and original UI are not reconstructed; panel defaults, LFO/ADSR generators,
-manual tempo and units are authored host adapters. LFO Sync uses the manual
-Tempo parameter — there is no automatic DAW transport connection. See
-`EVIDENCE.md` in the original archive for provenance details.
+This wraps the independently reconstructed engine. The packed `Polar.data`
+resources, original factory presets and original artwork are not reconstructed;
+the GUI is drawn from scratch after the original panel's layout. See *Not
+verified* above for what the comparisons do and do not establish.
 
 ## Project layout
 
 ```
 CMakeLists.txt          build for macOS (.clap bundle) and Linux (.clap + tests)
 build-mac.sh            one-command Apple Silicon build + install
-engine/                 recovered DSP engine, unchanged from Polar_Complete/src
+engine/                 recovered DSP engine; bundled_math.hpp = the original's libm
 src/params.{hpp,cpp}    parameter model shared by core, GUI and tests
 src/plugin.{hpp,cpp}    plugin instance: buffering, params, state, process
 src/entry.cpp           CLAP C ABI: callbacks, extensions, factory, entry
@@ -219,12 +231,16 @@ src/gui/polar_gui.{hpp,mm}  macOS Cocoa panel
 clap-sdk/               vendored CLAP 1.2 headers (MIT)
 tests/host_smoke.cpp    black-box host harness + bit-exact engine comparison
 tests/whitebox.cpp      C++-level unit tests
+tests/golden.cpp        the original's math and tables, pinned by hashes
+tests/gui_snapshot.mm   renders the GUI to a PNG
 cmake/Info.plist.in     bundle metadata
 ```
 
 ## Licenses
 
 - CLAP SDK headers: MIT (see `clap-sdk/LICENSE`).
+- `engine/bundled_math.hpp`: fdlibm notice (Sun Microsystems), see
+  `THIRD_PARTY_NOTICES.md`.
 - Engine and wrapper: part of the Polar reconstruction project; see
   `THIRD_PARTY_NOTICES.md` and the original archive's notices. No license to
   the original Polar product is implied.
