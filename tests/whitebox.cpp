@@ -225,7 +225,7 @@ int main() {
         if (p.position != kParams[polar_clap::P_POSITION].def || p.position_mod != 0.25f) fail("position modulation routing");
         if (std::fabs(p.cutoff_mod + 0.2f) > 1e-6f || std::fabs(p.resonance_mod - 0.1f) > 1e-6f) fail("filter modulation routing");
         if (p.algorithm != 3 || !p.lock) fail("stepped/bool modulation");
-        if (std::fabs(p.level_1 - 0.5f) > 1e-6f) fail("level modulation");
+        if (std::fabs(p.level_1 - 0.7f) > 1e-6f) fail("level modulation");  // default 100 % - 30 %
         for (uint32_t i = 0; i < (uint32_t)PARAM_COUNT; ++i)
             if (polar_clap::isModulatable(i) == (i == polar_clap::P_RESET || i == polar_clap::P_BYPASS)) fail("modulatable flag policy");
         // With zero modulation the engine sees exactly the base values (verified signal path unchanged).

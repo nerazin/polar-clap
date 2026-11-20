@@ -35,7 +35,7 @@ const ParamDesc kParams[PARAM_COUNT] = {
     // --- Voice 1 ---
     {"pitch_1", "Pitch 1", "Pitch", "Voice 1", -36, 36, 0, kFloat, U_SEMI, nullptr, &EngineParams::pitch_1, nullptr, nullptr},
     {"tune_1", "Tune 1", "Tune", "Voice 1", -100, 100, 0, kFloat, U_CENT, nullptr, &EngineParams::tune_1, nullptr, nullptr},
-    {"level_1", "Level 1", "Level", "Voice 1", 0, 1, 0.8f, kFloat, U_PERCENT, nullptr, &EngineParams::level_1, nullptr, nullptr},
+    {"level_1", "Level 1", "Level", "Voice 1", 0, 1, 1.0f, kFloat, U_PERCENT, nullptr, &EngineParams::level_1, nullptr, nullptr},
     {"pan_1", "Pan 1", "Pan", "Voice 1", -1, 1, 0.0f, kFloat, U_PAN, nullptr, &EngineParams::pan_1, nullptr, nullptr},
     {"feedback_1", "Feedback 1", "Feedbk", "Voice 1", 0, 0.99f, 0, kFloat, U_PERCENT, nullptr, &EngineParams::feedback_1, nullptr, nullptr},
     {"pitch_lfo_1", "Pitch LFO 1", "Pt LFO", "Voice 1", -24, 24, 0, kFloat, U_SEMI, nullptr, &EngineParams::pitch_lfo_1, nullptr, nullptr},
@@ -44,7 +44,7 @@ const ParamDesc kParams[PARAM_COUNT] = {
     {"enable_2", "Enable Voice 2", "Enable", "Voice 2", 0, 1, 0, kBool, U_NONE, nullptr, nullptr, nullptr, &EngineParams::enable_2},
     {"pitch_2", "Pitch 2", "Pitch", "Voice 2", -36, 36, 7, kFloat, U_SEMI, nullptr, &EngineParams::pitch_2, nullptr, nullptr},
     {"tune_2", "Tune 2", "Tune", "Voice 2", -100, 100, 0, kFloat, U_CENT, nullptr, &EngineParams::tune_2, nullptr, nullptr},
-    {"level_2", "Level 2", "Level", "Voice 2", 0, 1, 0.6f, kFloat, U_PERCENT, nullptr, &EngineParams::level_2, nullptr, nullptr},
+    {"level_2", "Level 2", "Level", "Voice 2", 0, 1, 1.0f, kFloat, U_PERCENT, nullptr, &EngineParams::level_2, nullptr, nullptr},
     {"pan_2", "Pan 2", "Pan", "Voice 2", -1, 1, 0.0f, kFloat, U_PAN, nullptr, &EngineParams::pan_2, nullptr, nullptr},
     {"feedback_2", "Feedback 2", "Feedbk", "Voice 2", 0, 0.99f, 0, kFloat, U_PERCENT, nullptr, &EngineParams::feedback_2, nullptr, nullptr},
     {"delay_2", "Delay 2", "Delay", "Voice 2", 0, 1000, 0, kFloat, U_MS, nullptr, &EngineParams::delay_2, nullptr, nullptr},
@@ -75,7 +75,7 @@ const ParamDesc kParams[PARAM_COUNT] = {
     // --- Output ---
     {"dry", "Dry", "Dry", "Output", 0, 1, 0, kFloat, U_PERCENT, nullptr, &EngineParams::dry, nullptr, nullptr},
     {"dry_delay", "Dry Delay", "Dry Dly", "Output", 0, 1000, 0, kFloat, U_MS, nullptr, &EngineParams::dry_delay, nullptr, nullptr},
-    {"output_db", "Output", "Output", "Output", -60, 6, -6, kFloat, U_DB, nullptr, &EngineParams::output_db, nullptr, nullptr},
+    {"output_db", "Output", "Output", "Output", -60, 6, 0, kFloat, U_DB, nullptr, &EngineParams::output_db, nullptr, nullptr},
     {"bypass", "Bypass", "Bypass", "Output", 0, 1, 0, kBool, U_NONE, nullptr, nullptr, nullptr, &EngineParams::bypass},
     // --- External block-rate modulation (kept for parity with the Pd panel) ---
     {"external_modulation", "External Mod", "Ext Mod", "External", 0, 1, 0, kBool, U_NONE, nullptr, nullptr, nullptr, &EngineParams::external_modulation},

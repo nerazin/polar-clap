@@ -269,10 +269,10 @@ public:
         bool lock = false, stereo = false;
         float position = 0.20f, loop = 0.60f;
         float position_lfo = 0, position_env = 0;
-        float pitch_1 = 0, tune_1 = 0, feedback_1 = 0, level_1 = 0.8f, pan_1 = 0;
+        float pitch_1 = 0, tune_1 = 0, feedback_1 = 0, level_1 = 1.0f, pan_1 = 0;
         float pitch_lfo_1 = 0, pitch_env_1 = 0;
         bool enable_2 = false;
-        float pitch_2 = 7, tune_2 = 0, feedback_2 = 0, level_2 = 0.6f, pan_2 = 0;
+        float pitch_2 = 7, tune_2 = 0, feedback_2 = 0, level_2 = 1.0f, pan_2 = 0;
         float delay_2 = 0, pitch_lfo_2 = 0, pitch_env_2 = 0;
         bool filter_on = false;
         int filter_mode = 0;     // LP,BP,HP,comb
@@ -294,7 +294,7 @@ public:
         // Host transport for the synced LFO: playing, and song position in quarter notes.
         bool playing = false;
         double song_position = 0;
-        float dry = 0, dry_delay = 0, output_db = -6;
+        float dry = 0, dry_delay = 0, output_db = 0;
         bool bypass = false;
         // Optional external scalar modulation for host adapters or validation.
         bool external_modulation = false;
