@@ -32,7 +32,7 @@ const ParamDesc kParams[PARAM_COUNT] = {
     {"pitch_1", "Pitch 1", "Pitch", "Voice 1", -36, 36, 0, kFloat, U_SEMI, nullptr, &EngineParams::pitch_1, nullptr, nullptr},
     {"tune_1", "Tune 1", "Tune", "Voice 1", -100, 100, 0, kFloat, U_CENT, nullptr, &EngineParams::tune_1, nullptr, nullptr},
     {"level_1", "Level 1", "Level", "Voice 1", 0, 1, 0.8f, kFloat, U_PERCENT, nullptr, &EngineParams::level_1, nullptr, nullptr},
-    {"pan_1", "Pan 1", "Pan", "Voice 1", -1, 1, -0.35f, kFloat, U_PAN, nullptr, &EngineParams::pan_1, nullptr, nullptr},
+    {"pan_1", "Pan 1", "Pan", "Voice 1", -1, 1, 0.0f, kFloat, U_PAN, nullptr, &EngineParams::pan_1, nullptr, nullptr},
     {"feedback_1", "Feedback 1", "Feedbk", "Voice 1", 0, 0.99f, 0, kFloat, U_PERCENT, nullptr, &EngineParams::feedback_1, nullptr, nullptr},
     {"pitch_lfo_1", "Pitch LFO 1", "Pt LFO", "Voice 1", -24, 24, 0, kFloat, U_SEMI, nullptr, &EngineParams::pitch_lfo_1, nullptr, nullptr},
     {"pitch_env_1", "Pitch Env 1", "Pt Env", "Voice 1", -24, 24, 0, kFloat, U_SEMI, nullptr, &EngineParams::pitch_env_1, nullptr, nullptr},
@@ -41,7 +41,7 @@ const ParamDesc kParams[PARAM_COUNT] = {
     {"pitch_2", "Pitch 2", "Pitch", "Voice 2", -36, 36, 7, kFloat, U_SEMI, nullptr, &EngineParams::pitch_2, nullptr, nullptr},
     {"tune_2", "Tune 2", "Tune", "Voice 2", -100, 100, 0, kFloat, U_CENT, nullptr, &EngineParams::tune_2, nullptr, nullptr},
     {"level_2", "Level 2", "Level", "Voice 2", 0, 1, 0.6f, kFloat, U_PERCENT, nullptr, &EngineParams::level_2, nullptr, nullptr},
-    {"pan_2", "Pan 2", "Pan", "Voice 2", -1, 1, 0.35f, kFloat, U_PAN, nullptr, &EngineParams::pan_2, nullptr, nullptr},
+    {"pan_2", "Pan 2", "Pan", "Voice 2", -1, 1, 0.0f, kFloat, U_PAN, nullptr, &EngineParams::pan_2, nullptr, nullptr},
     {"feedback_2", "Feedback 2", "Feedbk", "Voice 2", 0, 0.99f, 0, kFloat, U_PERCENT, nullptr, &EngineParams::feedback_2, nullptr, nullptr},
     {"delay_2", "Delay 2", "Delay", "Voice 2", 0, 1000, 0, kFloat, U_MS, nullptr, &EngineParams::delay_2, nullptr, nullptr},
     {"pitch_lfo_2", "Pitch LFO 2", "Pt LFO", "Voice 2", -24, 24, 0, kFloat, U_SEMI, nullptr, &EngineParams::pitch_lfo_2, nullptr, nullptr},
@@ -220,6 +220,7 @@ bool parseValue(const ParamDesc& d, const char* text, double* out) {
     }
     char* end = nullptr;
     // Pan accepts "L 35" / "R 35" / "C" (percent by default) in addition to -1..1
+    if (d.unit == U_PAN && (*text == 'C' || *text == 'c')) { *out = 0.0; return true; }  // the centre display
     if (d.unit == U_PAN && (*text == 'L' || *text == 'l' || *text == 'R' || *text == 'r')) {
         bool left = (*text == 'L' || *text == 'l');
         const char* num = text + 1;

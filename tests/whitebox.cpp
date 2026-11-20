@@ -227,6 +227,7 @@ int main() {
         struct PCase { uint32_t param; const char* text; double want; } pcases[] = {
             {polar_clap::P_PAN_1, "L 35 %", -0.35},
             {polar_clap::P_PAN_1, "R 20", 0.2},
+            {polar_clap::P_PAN_2, "C", 0.0},
             {polar_clap::P_CUTOFF, "75 %", 0.75},
             {polar_clap::P_CUTOFF, "0.8", 0.8},
             {polar_clap::P_ALGORITHM, "Rev Loop", 3.0},
