@@ -128,9 +128,9 @@ enum ControlStyle { kKnob, kBigKnob, kDepthKnob, kSlider, kLed, kRadio, kSegment
 
 - (void)refreshFromPlugin {
     if (![self alive]) return;
-    const float b = mPlugin->uiBase(mIndex), v = mPlugin->uiValue(mIndex);
+    // While dragging, the drag owns the base; the modulated value still follows the engine.
+    const float b = mDragging ? mShownBase : mPlugin->uiBase(mIndex), v = mPlugin->uiValue(mIndex);
     const BOOL dim = mDimmed ? (mDimmed() ? YES : NO) : NO;
-    if (mDragging) { if (dim != mShownDim) { mShownDim = dim; [self setNeedsDisplay:YES]; } return; }
     if (b != mShownBase || v != mShownValue || dim != mShownDim) {
         mShownBase = b; mShownValue = v; mShownDim = dim;
         [self setNeedsDisplay:YES];
