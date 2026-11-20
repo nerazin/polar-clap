@@ -1,3 +1,0 @@
-/Users/stsi/Downloads/polar-clap/build-mac/CMakeFiles/polar_reconstruction.dir
-/Users/stsi/Downloads/polar-clap/build-mac/CMakeFiles/edit_cache.dir
-/Users/stsi/Downloads/polar-clap/build-mac/CMakeFiles/rebuild_cache.dir
