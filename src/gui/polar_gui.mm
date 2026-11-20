@@ -443,7 +443,7 @@ struct Section { NSRect r; NSString* title; };
 }
 
 - (void)buildLayout {
-    const CGFloat W = 1000, H = 478, top = 58;
+    const CGFloat W = 1086, H = 478, top = 58;
     mPanel = [[PolarPanel alloc] initWithFrame:NSMakeRect(0, 0, W, H)];
     PolarPlugin* pl = mPlugin;
     auto eff = [pl](pc::ParamId id) { return pl->uiValue((uint32_t)id); };
@@ -507,13 +507,13 @@ struct Section { NSRect r; NSString* title; };
     auto synced = [eff] { return eff(pc::P_LFO_SYNC) >= 0.5f; };
     PolarControl* rate = [self add:pc::P_LFO_RATE style:kKnob x:rx + 4 y:top + 154 w:KW h:KH label:@"Rate"];
     rate->mDimmed = synced;
-    PolarControl* div = [self add:pc::P_DIVISION style:kKnob x:rx + 62 y:top + 154 w:KW h:KH label:@"Cyc/Beat"];
+    PolarControl* div = [self add:pc::P_DIVISION style:kKnob x:rx + 62 y:top + 154 w:KW h:KH label:@"Synced"];
     div->mDimmed = [synced] { return !synced(); };
     [self add:pc::P_LFO_PHASE style:kKnob x:rx + 120 y:top + 154 w:KW h:KH label:@"Phase"];
     [self add:pc::P_PAN_LFO style:kDepthKnob x:rx + 178 y:top + 154 w:KW h:KH label:@"Pan"];
-    PolarControl* wave = [self add:pc::P_LFO_WAVE style:kSegments x:rx + 10 y:top + 230 w:150 h:22 label:@""];
-    wave->mShortNames = {"Sine", "Tri", "Saw", "Sqr"};
-    [self add:pc::P_LFO_SYNC style:kLed x:rx + 170 y:top + 232 w:70 h:18 label:@"Sync"];
+    PolarControl* wave = [self add:pc::P_LFO_WAVE style:kSegments x:rx + 8 y:top + 230 w:226 h:22 label:@""];
+    wave->mShortNames = {"Tri", "Up", "Down", "Sqr", "Rnd", "Smth", "Sine"};
+    [self add:pc::P_LFO_SYNC style:kLed x:rx + 120 y:top + 137 w:60 h:18 label:@"Sync"];
 
     [self section:@"      FILTER" x:rx y:top + 270 w:rw h:140];
     [self add:pc::P_FILTER_ON style:kLed x:rx + 8 y:top + 275 w:24 h:18 label:@""];
@@ -524,6 +524,13 @@ struct Section { NSRect r; NSString* title; };
     c = [self add:pc::P_FILTER_LFO style:kDepthKnob x:rx + 134 y:top + 300 w:54 h:KH label:@"LFO"]; c->mDimmed = filterOff;
     c = [self add:pc::P_FILTER_ENV style:kDepthKnob x:rx + 188 y:top + 300 w:52 h:KH label:@"Env"]; c->mDimmed = filterOff;
     c = [self add:pc::P_FILTER_MODE style:kSegments x:rx + 12 y:top + 382 w:218 h:20 label:@""]; c->mDimmed = filterOff;
+
+    // KEYBOARD: MIDI keys gate the envelope; pitch bend moves the wheel.
+    const CGFloat kx = 998;
+    [self section:@"KEYS" x:kx y:top w:76 h:410];
+    [self add:pc::P_PITCH_WHEEL style:kKnob x:kx + 9 y:top + 30 w:KW h:KH label:@"P.Wheel"];
+    [self add:pc::P_KEYBOARD_PITCH style:kLed x:kx + 8 y:top + 122 w:66 h:18 label:@"Pitch"];
+    [self add:pc::P_FILTER_KBD style:kKnob x:kx + 9 y:top + 156 w:KW h:KH label:@"Flt Kbd"];
 
     mSize = NSMakeSize(W, H);
     [self tick:nil];
@@ -544,7 +551,10 @@ struct Section { NSRect r; NSString* title; };
     (void)timer;
     for (PolarControl* c in mControls) [c refreshFromPlugin];
     const float tempo = mPlugin->uiTempo();
-    [mPanel setStatus:[NSString stringWithFormat:@"LFO tempo %.1f BPM   ·   latency 64 samples", tempo]];
+    const int key = mPlugin->uiKey();
+    static const char* names[12] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
+    NSString* keyText = key >= 0 ? [NSString stringWithFormat:@"key %s%d", names[key % 12], key / 12 - 1] : @"no key";
+    [mPanel setStatus:[NSString stringWithFormat:@"%@   ·   LFO tempo %.1f BPM   ·   latency 64 samples", keyText, tempo]];
 }
 
 - (void)shutdown {

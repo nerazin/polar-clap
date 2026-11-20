@@ -12,7 +12,11 @@ namespace polar_clap {
 static const char* kAlgoEnums[] = {"Smooth", "Classic", "Loop", "Rev Loop", nullptr};
 static const char* kSpeedEnums[] = {"Slow", "Medium", "Fast", nullptr};
 static const char* kFilterEnums[] = {"LP", "BP", "HP", "Comb", nullptr};
-static const char* kWaveEnums[] = {"Sine", "Triangle", "Saw", "Square", nullptr};
+// The original panel's six waves, then the binary's own (unexposed) sine.
+static const char* kWaveEnums[] = {"Triangle", "Saw Up", "Saw Down", "Square", "Random", "Smooth Random", "Sine", nullptr};
+// Synced LFO cycle lengths (OriginalLfo::syncBeats), in 4/4.
+static const char* kSyncEnums[] = {"8 bars", "4 bars", "3 bars", "2 bars", "7/4", "6/4", "5/4", "1 bar", "3/4", "2/4",
+                                   "3/8", "1/4", "3/16", "1/8", "1/8 T", "1/16", "1/32", "1/64", nullptr};
 
 // Order, ranges and defaults follow the recovered engine parameter struct and
 // the published control table (Polar reconstruction 0.2).
@@ -54,19 +58,19 @@ const ParamDesc kParams[PARAM_COUNT] = {
     {"filter_lfo", "Filter LFO", "Flt LFO", "Filter", -1, 1, 0, kFloat, U_DEPTH, nullptr, &EngineParams::filter_lfo, nullptr, nullptr},
     {"filter_env", "Filter Env", "Flt Env", "Filter", -1, 1, 0, kFloat, U_DEPTH, nullptr, &EngineParams::filter_env, nullptr, nullptr},
     // --- LFO ---
-    {"lfo_rate", "LFO Rate", "Rate", "LFO", 0.02f, 20, 0.30f, kFloat, U_HZ, nullptr, &EngineParams::lfo_rate, nullptr, nullptr},
+    {"lfo_rate", "LFO Rate", "Rate", "LFO", 0, 1, 0.22f, kFloat, U_LFO_HZ, nullptr, &EngineParams::lfo_rate, nullptr, nullptr},
     {"lfo_sync", "LFO Sync", "Sync", "LFO", 0, 1, 0, kBool, U_NONE, nullptr, nullptr, nullptr, &EngineParams::lfo_sync},
     {"tempo", "Fallback Tempo", "Tempo", "LFO", 40, 250, 120, kFloat, U_BPM, nullptr, &EngineParams::tempo, nullptr, nullptr},
-    {"division", "LFO Division", "Div", "LFO", 0.25f, 8, 1, kFloat, U_NONE, nullptr, &EngineParams::division, nullptr, nullptr},
-    {"lfo_wave", "LFO Wave", "Wave", "LFO", 0, 3, 0, kInt, U_NONE, kWaveEnums, nullptr, &EngineParams::lfo_wave, nullptr},
+    {"division", "LFO Sync Rate", "Sync Rate", "LFO", 0, 17, 11, kInt, U_NONE, kSyncEnums, nullptr, &EngineParams::division, nullptr},
+    {"lfo_wave", "LFO Wave", "Wave", "LFO", 0, 6, 0, kInt, U_NONE, kWaveEnums, nullptr, &EngineParams::lfo_wave, nullptr},
     {"lfo_phase", "LFO Phase", "Phase", "LFO", 0, 1, 0, kFloat, U_PERCENT, nullptr, &EngineParams::lfo_phase, nullptr, nullptr},
     {"pan_lfo", "Pan LFO Depth", "Pan LFO", "LFO", 0, 1, 0, kFloat, U_DEPTH, nullptr, &EngineParams::pan_lfo, nullptr, nullptr},
     // --- Envelope ---
     {"gate", "Gate", "Gate", "Envelope", 0, 1, 0, kBool, U_NONE, nullptr, nullptr, nullptr, &EngineParams::gate},
-    {"attack", "Attack", "Attack", "Envelope", 0, 2, 0.02f, kFloat, U_SEC, nullptr, &EngineParams::attack, nullptr, nullptr},
-    {"decay", "Decay", "Decay", "Envelope", 0, 2, 0.2f, kFloat, U_SEC, nullptr, &EngineParams::decay, nullptr, nullptr},
-    {"sustain", "Sustain", "Sustain", "Envelope", 0, 1, 0.7f, kFloat, U_PERCENT, nullptr, &EngineParams::sustain, nullptr, nullptr},
-    {"release", "Release", "Release", "Envelope", 0, 2, 0.5f, kFloat, U_SEC, nullptr, &EngineParams::release, nullptr, nullptr},
+    {"attack", "Attack", "Attack", "Envelope", 0, 1, 0.19f, kFloat, U_ATTACK, nullptr, &EngineParams::attack, nullptr, nullptr},
+    {"decay", "Decay", "Decay", "Envelope", 0, 1, 0.27f, kFloat, U_DECAY, nullptr, &EngineParams::decay, nullptr, nullptr},
+    {"sustain", "Sustain", "Sustain", "Envelope", 0, 1, 0.89f, kFloat, U_LEVEL3, nullptr, &EngineParams::sustain, nullptr, nullptr},
+    {"release", "Release", "Release", "Envelope", 0, 1, 0.37f, kFloat, U_DECAY, nullptr, &EngineParams::release, nullptr, nullptr},
     {"env_to_amp", "Env to Amp", "Env>Amp", "Envelope", 0, 1, 0, kFloat, U_DEPTH, nullptr, &EngineParams::env_to_amp, nullptr, nullptr},
     // --- Output ---
     {"dry", "Dry", "Dry", "Output", 0, 1, 0, kFloat, U_PERCENT, nullptr, &EngineParams::dry, nullptr, nullptr},
@@ -79,7 +83,17 @@ const ParamDesc kParams[PARAM_COUNT] = {
     {"external_envelope", "External Env", "Ext Env", "External", 0, 1, 0, kFloat, U_DEPTH, nullptr, &EngineParams::external_envelope, nullptr, nullptr},
     // --- Trigger (no engine parameter; handled by the plugin core) ---
     {"reset", "Reset Capture", "Reset", "Algorithm", 0, 1, 0, kTrigger, U_NONE, nullptr, nullptr, nullptr, nullptr},
+    // --- Keyboard (MIDI pitch bend adds to the wheel) ---
+    {"pitch_wheel", "Pitch Wheel", "Wheel", "Keyboard", -1, 1, 0, kFloat, U_OCTAVE, nullptr, &EngineParams::pitch_wheel, nullptr, nullptr},
+    {"keyboard_pitch", "Keyboard Pitch", "Kbd Pitch", "Keyboard", 0, 1, 0, kBool, U_NONE, nullptr, nullptr, nullptr, &EngineParams::keyboard_pitch},
+    {"filter_kbd", "Filter Kbd", "Flt Kbd", "Filter", 0, 1, 0, kFloat, U_PERCENT, nullptr, &EngineParams::filter_kbd, nullptr, nullptr},
 };
+
+// Display curves of the original knobs (engine/original_lfo.hpp, original_adsr.hpp).
+static double lfoHz(double v) { return 8.175799369812012 * std::exp2(7.0 * (v - 0.9)); }
+static double curveScale(const ParamDesc& d) { return d.unit == U_ATTACK ? 3.0 : 10.0; }
+static double curveSeconds(const ParamDesc& d, double v) { return curveScale(d) * v * v * v + 1e-4; }
+static double curveKnob(const ParamDesc& d, double seconds) { return std::cbrt(std::fmax(0.0, seconds - 1e-4) / curveScale(d)); }
 
 float clampToParam(const ParamDesc& d, float v) {
     if (!(v >= d.min)) return d.min; // also catches NaN
@@ -174,6 +188,25 @@ bool formatValue(const ParamDesc& d, double v, char* out, size_t cap) {
             else snprintf(out, cap, "%.2f s", q);
             break;
         case U_BPM:   snprintf(out, cap, "%.1f BPM", q); break;
+        case U_LFO_HZ: {
+            const double hz = lfoHz(q);
+            snprintf(out, cap, hz < 1 ? "%.3f Hz" : hz < 10 ? "%.2f Hz" : "%.1f Hz", hz);
+            break;
+        }
+        case U_ATTACK:
+        case U_DECAY: {
+            const double t = curveSeconds(d, q);
+            if (t < 0.01) snprintf(out, cap, "%.1f ms", t * 1000.0);
+            else if (t < 1) snprintf(out, cap, "%.0f ms", t * 1000.0);
+            else snprintf(out, cap, "%.2f s", t);
+            break;
+        }
+        case U_LEVEL3: {
+            const double l = (double)q * q * q * 100.0;
+            snprintf(out, cap, l < 10 ? "%.1f %%" : "%.0f %%", l);
+            break;
+        }
+        case U_OCTAVE: snprintf(out, cap, "%+.1f st", q * 12.f); break;
         case U_PAN: {
             float p2 = clampToParam(d, q);
             if (p2 < -0.005f) snprintf(out, cap, "L %.0f %%", -p2 * 100.f);
@@ -207,12 +240,13 @@ bool parseValue(const ParamDesc& d, const char* text, double* out) {
             if (parseOnOff(text)) { *out = isOn(text) ? 1 : 0; return true; }
             break;
         case kInt: {
-            char* end = nullptr;
-            long iv = strtol(text, &end, 10);
-            if (end != text) { *out = (double)clampToParam(d, (float)iv); return true; }
+            // Names first: some start with a digit ("8 bars", "1/4").
             for (int e = 0; d.enums && d.enums[e]; ++e) {
                 if (!strcasecmp(text, d.enums[e])) { *out = e; return true; }
             }
+            char* end = nullptr;
+            long iv = strtol(text, &end, 10);
+            if (end != text) { *out = (double)clampToParam(d, (float)iv); return true; }
             return false;
         }
         default:
@@ -233,7 +267,14 @@ bool parseValue(const ParamDesc& d, const char* text, double* out) {
     }
     double v = strtod(text, &end);
     if (end == text) return false;
-    if (d.unit == U_SEC && strstr(end, "ms")) v /= 1000.0;  // matches the "200 ms" display
+    if ((d.unit == U_SEC || d.unit == U_ATTACK || d.unit == U_DECAY) && strstr(end, "ms")) v /= 1000.0;  // "200 ms"
+    switch (d.unit) {  // the original knobs are typed in their display units
+        case U_LFO_HZ: v = v > 0 ? std::log2(v / 8.175799369812012) / 7.0 + 0.9 : d.min; break;
+        case U_ATTACK: case U_DECAY: v = curveKnob(d, v); break;
+        case U_LEVEL3: v = std::cbrt(std::fmax(0.0, v) / 100.0); break;
+        case U_OCTAVE: v /= 12.0; break;
+        default: break;
+    }
     // percent-style input for 0..1 parameters: "75 %" or "75%"
     if ((d.unit == U_PERCENT || d.unit == U_DEPTH || d.unit == U_PAN) &&
         (fabs(v) > 1.0001 || strchr(text, '%'))) {
@@ -241,6 +282,28 @@ bool parseValue(const ParamDesc& d, const char* text, double* out) {
     }
     *out = (double)clampToParam(d, (float)v);
     return true;
+}
+
+float migrateStateV1(uint32_t index, float value) {
+    const ParamDesc& d = kParams[index];
+    double v = value;
+    switch (index) {
+        case P_LFO_RATE: v = std::log2(std::fmax(value, 1e-3f) / 8.175799369812012) / 7.0 + 0.9; break;
+        case P_DIVISION: {  // cycles per beat -> the synced cycle length nearest on a log scale
+            const double beats = 1.0 / std::fmax(value, 1e-3f);
+            int best = 0;
+            for (int k = 1; k < 18; ++k)
+                if (std::fabs(std::log(polar_recovered::OriginalLfo::syncBeats(k) / beats)) <
+                    std::fabs(std::log(polar_recovered::OriginalLfo::syncBeats(best) / beats))) best = k;
+            v = best;
+            break;
+        }
+        case P_LFO_WAVE: { static const int map[4] = {6, 0, 1, 3}; v = map[value >= 0.5f ? (value >= 2.5f ? 3 : value >= 1.5f ? 2 : 1) : 0]; break; }
+        case P_ATTACK: case P_DECAY: case P_RELEASE: v = curveKnob(d, value); break;
+        case P_SUSTAIN: v = std::cbrt(std::fmax(0.0f, value)); break;
+        default: break;
+    }
+    return clampToParam(d, (float)v);
 }
 
 } // namespace polar_clap

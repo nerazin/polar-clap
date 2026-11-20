@@ -68,6 +68,8 @@ public:
     void uiTriggerReset() { resetPending_.store(true); }
     // Tempo the LFO uses (host tempo when the host provides it).
     float uiTempo() const { return tempo_.load(std::memory_order_relaxed); }
+    // Sounding MIDI key while one is held, else -1.
+    int uiKey() const { return key_.load(std::memory_order_relaxed); }
 
     polar_recovered::PolarProcessor& processor() { return processor_; }
     const clap_host_t* host() const { return host_; }
@@ -96,6 +98,7 @@ public:
     bool loadState(const clap_istream_t* s);
 
     void handleEvent(const clap_event_header_t* ev);
+    void handleNoteEvent(const clap_event_header_t* ev);
     void emitGuiEvents(const clap_output_events_t* out);
     void requestFlush();
 
@@ -109,6 +112,10 @@ public:
     std::atomic<float> ui_[PARAM_COUNT]{};       // effective values published per block
     GuiEventQueue guiEvents_;
     std::atomic<float> tempo_{120.0f};
+    std::atomic<int> key_{-1};
+    // MIDI pitch bend (-1..1 = +-1 octave) and CLAP tuning expression (semitones), added to
+    // the Pitch Wheel parameter. Audio thread only.
+    float bend_ = 0.f, tuning_ = 0.f;
 
     // 64-frame input carry (engine contract: exactly 64 samples per call).
     float carryL_[64]{}, carryR_[64]{};

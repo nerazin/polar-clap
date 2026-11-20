@@ -4,6 +4,9 @@
 //    every powf(128, t) with t in [0,1], and 650M random powf/atan2f/sin/cos inputs (0 differ).
 //    These hashes over strided subsets were printed by running the same stimulus through the
 //    ORIGINAL routines (the lab harness's "golden" mode), as the playbook's golden step does.
+//  - The LFO (CLFOModule), envelope (CADSRModule) and binary64 exp ports were proven against
+//    the original routines with randomized stimulus and every state word compared (0 differ);
+//    their hashes over tests/golden_stimulus.hpp were printed by the original routines too.
 //  - The FFT trig/Hann/fade tables generated with it must keep the pinned hash of the
 //    original binary's table data.
 #include <cmath>
@@ -17,6 +20,9 @@
 #include "fft0.hpp"
 #include "fft1.hpp"
 #undef private
+#include "golden_stimulus.hpp"
+#include "original_adsr.hpp"
+#include "original_lfo.hpp"
 
 namespace bm = polar_recovered::bundled;
 static int g_failures = 0;
@@ -33,6 +39,17 @@ static uint64_t hashOver(uint64_t n, const std::function<uint32_t(uint64_t)>& fn
 int main(int argc, char** argv) {
     const bool print = argc > 1 && !strcmp(argv[1], "--print");
     struct Golden { const char* name; uint64_t expect; std::function<uint64_t()> run; } goldens[] = {
+        {"exp", 0x2fdb79945fa7a1bfull, [] { return golden::expHash([](double x) { return bm::exp(x); }); }},
+        {"lfo", 0x387c776235062df3ull, [] {
+            polar_recovered::OriginalLfo l; l.sample_rate = 48000; l.seed = 0x1234567u; l.reset();
+            return golden::lfoHash([&](const golden::LfoIn& in) {
+                return l.tick(in.shape, in.rate, in.sync, in.syncRate, in.phase, in.tempo, in.playing, in.ppq); });
+        }},
+        {"adsr", 0x39924d945eb34f16ull, [] {
+            polar_recovered::OriginalAdsr e; e.sample_rate = 48000; e.reset(); static float out[64];
+            return golden::adsrHash([&](const golden::AdsrIn& in) {
+                e.process(in.gate, in.attack, in.decay, in.sustain, in.release, out); return (const float*)out; });
+        }},
         {"expf", 0x456faf1b87888edaull, [] { return hashOver(1u << 22, [](uint64_t i) { return word(bm::expf(bits(uint32_t(i * 1021u)))); }); }},
         {"atanf", 0x388b5aeb815e9d82ull, [] { return hashOver(1u << 22, [](uint64_t i) { return word(bm::detail::atanf(bits(uint32_t(i * 1021u)))); }); }},
         {"cosf", 0x6b5f80d08aae090dull, [] { return hashOver(1u << 22, [](uint64_t i) { return word(bm::cosf(bits(uint32_t(i * 257u) % 0x43490f81u | (i & 1 ? 0x80000000u : 0)))); }); }},
@@ -45,9 +62,9 @@ int main(int argc, char** argv) {
     for (auto& g : goldens) {
         const uint64_t h = g.run();
         if (print) printf("        {\"%s\", 0x%016llxull, ...}\n", g.name, (unsigned long long)h);
-        else if (h != g.expect) { char m[96]; snprintf(m, sizeof m, "bundled %s hash %016llx", g.name, (unsigned long long)h); fail(m); }
+        else if (h != g.expect) { char m[96]; snprintf(m, sizeof m, "%s hash %016llx", g.name, (unsigned long long)h); fail(m); }
     }
-    if (!print) printf("bundled libm golden hashes: %s\n", g_failures ? "FAILED" : "ok");
+    if (!print) printf("bundled libm, LFO and envelope golden hashes: %s\n", g_failures ? "FAILED" : "ok");
 
     // Tables generated at start-up. Their hash was pinned after checking every entry against
     // the table data the reconstruction had copied out of the original binary (and the harness

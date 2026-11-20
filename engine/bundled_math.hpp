@@ -425,6 +425,53 @@ inline float atan2f(float y, float x) {
     }
 }
 
+// ---- e_exp.c + w_exp.c in binary64 (original 0x2aaf0 -> 0x2d230), used by the envelope
+inline double exp(double x) {
+    using namespace detail;
+    const double halF[2] = {0.5, -0.5}, huge = 1.0e+300, twom1000 = 9.33263618503218878990e-302,
+                 o_threshold = 7.09782712893383973096e+02, u_threshold = -7.45133219101941108420e+02,
+                 ln2HI[2] = {6.93147180369123816490e-01, -6.93147180369123816490e-01},
+                 ln2LO[2] = {1.90821492927058770002e-10, -1.90821492927058770002e-10},
+                 invln2 = 1.44269504088896338700e+00, P1 = 1.66666666666666019037e-01,
+                 P2 = -2.77777777770155933842e-03, P3 = 6.61375632143793436117e-05,
+                 P4 = -1.65339022054652515390e-06, P5 = 4.13813679705723846039e-08;
+    std::int32_t hx = high(x);
+    const std::int32_t xsb = (hx >> 31) & 1;
+    hx &= 0x7fffffff;
+    if (hx >= 0x40862e42) {
+        if (hx >= 0x7ff00000) return x != x ? x + x : (xsb == 0 ? x : 0.0);
+        if (x > o_threshold) return huge * huge;
+        if (x < u_threshold) return 0.0;  // twom1000*twom1000
+    }
+    double hi = 0, lo = 0;
+    std::int32_t k = 0;
+    if (hx > 0x3fd62e42) {
+        if (hx < 0x3ff0a2b2) { hi = x - ln2HI[xsb]; lo = ln2LO[xsb]; k = 1 - xsb - xsb; }
+        else {
+            k = std::int32_t(invln2 * x + halF[xsb]);
+            const double t = double(k);
+            hi = x - t * ln2HI[0];
+            lo = t * ln2LO[0];
+        }
+        x = hi - lo;
+    } else if (hx < 0x3e300000) {
+        return 1.0 + x;
+    }
+    const double t = x * x;
+    const double c = x - t * (P1 + t * (P2 + t * (P3 + t * (P4 + t * P5))));
+    if (k == 0) return 1.0 - ((x * c) / (c - 2.0) - x);
+    double y = 1.0 - ((lo - (x * c) / (2.0 - c)) - hi);
+    std::uint64_t b; std::memcpy(&b, &y, 8);
+    if (k >= -1021) {
+        b += std::uint64_t(std::uint32_t(k)) << 52;
+        std::memcpy(&y, &b, 8);
+        return y;
+    }
+    b += std::uint64_t(std::uint32_t(k + 1000)) << 52;
+    std::memcpy(&y, &b, 8);
+    return y * twom1000;
+}
+
 // ---- sf_cos.c (original 0x2a6a0)
 inline float cosf(float x) {
     using namespace detail;

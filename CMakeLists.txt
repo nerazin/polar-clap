@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 
 project(PolarReconstruction
-        VERSION 0.3.0
+        VERSION 0.4.0
         DESCRIPTION "Polar Reconstruction CLAP plugin"
         LANGUAGES C CXX)
 
@@ -48,8 +48,8 @@ if(APPLE)
         MACOSX_BUNDLE_EXECUTABLE_NAME "PolarReconstruction"
         MACOSX_BUNDLE_GUI_IDENTIFIER "com.polar-reconstruction.polar"
         MACOSX_BUNDLE_INFO_PLIST ${CMAKE_CURRENT_SOURCE_DIR}/cmake/Info.plist.in
-        MACOSX_BUNDLE_BUNDLE_VERSION "0.3.0"
-        MACOSX_BUNDLE_SHORT_VERSION_STRING "0.3.0"
+        MACOSX_BUNDLE_BUNDLE_VERSION "0.4.0"
+        MACOSX_BUNDLE_SHORT_VERSION_STRING "0.4.0"
         MACOSX_BUNDLE_COPYRIGHT "Reconstructed DSP; see THIRD_PARTY_NOTICES.md")
 else()
     set_target_properties(polar_reconstruction PROPERTIES SUFFIX ".clap")

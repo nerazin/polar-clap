@@ -20,7 +20,12 @@ enum ParamUnit {
     U_PERCENT,  // 0..1 shown as percent
     U_BPM,      // beats per minute
     U_PAN,      // -1..1 shown as L/R percent
-    U_DEPTH     // 0..1 modulation depth shown as percent
+    U_DEPTH,    // 0..1 modulation depth shown as percent
+    U_LFO_HZ,   // original LFO rate knob 0..1 shown in hertz
+    U_ATTACK,   // original attack knob 0..1 shown as its time, 3x^3 s
+    U_DECAY,    // original decay/release knob 0..1 shown as its time constant, 10x^3 s
+    U_LEVEL3,   // original sustain knob 0..1 shown as its level x^3 in percent
+    U_OCTAVE    // octaves shown as semitones
 };
 
 struct ParamDesc {
@@ -91,6 +96,10 @@ enum ParamId {
     P_EXTERNAL_LFO,
     P_EXTERNAL_ENV,
     P_RESET,
+    // Added in 0.4.0; appended so earlier ids keep their meaning.
+    P_PITCH_WHEEL,
+    P_KEYBOARD_PITCH,
+    P_FILTER_KBD,
     PARAM_COUNT
 };
 
@@ -116,5 +125,9 @@ bool isHidden(uint32_t index);
 // names and on/off). Both clamp to the parameter domain.
 bool formatValue(const ParamDesc& d, double v, char* out, size_t cap);
 bool parseValue(const ParamDesc& d, const char* text, double* out);
+
+// State version 1 (0.3.x) stored LFO rate in Hz, division in cycles per beat, four LFO
+// waves and envelope times in seconds. Converts such a value to this version's units.
+float migrateStateV1(uint32_t index, float value);
 
 } // namespace polar_clap

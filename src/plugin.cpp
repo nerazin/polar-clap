@@ -15,7 +15,7 @@ namespace polar_clap {
 
 static constexpr uint32_t kBlockSize = 64;      // engine contract
 static constexpr const char kStateMagic[] = "polar-clap-state";
-static constexpr uint32_t kStateVersion = 1;
+static constexpr uint32_t kStateVersion = 2;  // 1: 0.3.x units, migrated on load
 
 // ---------------------------------------------------------------- lifecycle
 
@@ -72,6 +72,8 @@ void PolarPlugin::resetEngine() {
     ringHead_ = 0;
     ringLen_ = kBlockSize;  // pre-fill: constant 64-frame latency
     for (uint32_t i = 0; i < kBlockSize; ++i) { ringL_[i] = 0.f; ringR_[i] = 0.f; }
+    processor_.allNotesOff();  // the host sends no note-offs across deactivation
+    bend_ = tuning_ = 0.f;
     resetPending_ = false;
     resetLatched_ = false;
 }
@@ -109,8 +111,41 @@ void PolarPlugin::uiTap(uint32_t index, float value) {
     uiEndGesture(index);
 }
 
+void PolarPlugin::handleNoteEvent(const clap_event_header_t* ev) {
+    switch (ev->type) {
+        case CLAP_EVENT_NOTE_ON: {
+            const auto* n = reinterpret_cast<const clap_event_note_t*>(ev);
+            if (n->key >= 0 && n->key <= 127) { tuning_ = 0.f; processor_.noteOn(n->key); }
+            break;
+        }
+        case CLAP_EVENT_NOTE_OFF:
+        case CLAP_EVENT_NOTE_CHOKE: {
+            const auto* n = reinterpret_cast<const clap_event_note_t*>(ev);
+            if (n->key < 0) processor_.allNotesOff();  // wildcard
+            else if (n->key <= 127) processor_.noteOff(n->key);
+            break;
+        }
+        case CLAP_EVENT_NOTE_EXPRESSION: {
+            const auto* x = reinterpret_cast<const clap_event_note_expression_t*>(ev);
+            if (x->expression_id == CLAP_NOTE_EXPRESSION_TUNING && std::isfinite(x->value)) tuning_ = (float)x->value;
+            break;
+        }
+        case CLAP_EVENT_MIDI: {
+            const auto* m = reinterpret_cast<const clap_event_midi_t*>(ev);
+            const uint8_t status = m->data[0] & 0xf0, d1 = m->data[1] & 0x7f, d2 = m->data[2] & 0x7f;
+            if (status == 0x90 && d2 > 0) processor_.noteOn(d1);
+            else if (status == 0x80 || status == 0x90) processor_.noteOff(d1);
+            else if (status == 0xe0) bend_ = std::fmax(-1.f, (float)((d2 << 7 | d1) - 8192) / 8191.f);
+            else if (status == 0xb0 && (d1 == 120 || d1 == 123)) processor_.allNotesOff();
+            break;
+        }
+        default: break;
+    }
+}
+
 void PolarPlugin::handleEvent(const clap_event_header_t* ev) {
     if (ev->space_id != CLAP_CORE_EVENT_SPACE_ID) return;
+    if (ev->type <= CLAP_EVENT_NOTE_EXPRESSION || ev->type == CLAP_EVENT_MIDI) { handleNoteEvent(ev); return; }
     if (ev->type == CLAP_EVENT_PARAM_MOD) {
         const auto* pm = reinterpret_cast<const clap_event_param_mod_t*>(ev);
         if (pm->param_id >= (clap_id)PARAM_COUNT || !isModulatable(pm->param_id)) return;
@@ -217,7 +252,7 @@ void PolarPlugin::process(const clap_process_t* pr) {
     emitGuiEvents(pr->out_events);
 
     // Host transport drives the LFO's tempo sync: host tempo replaces the fallback
-    // Tempo parameter, and while playing the phase locks to the song position.
+    // Tempo parameter, and while playing the LFO reads the song position, as in Reason.
     const clap_event_transport_t* tr = pr->transport;
     const bool hostTempo = tr && (tr->flags & CLAP_TRANSPORT_HAS_TEMPO) && tr->tempo > 0;
     const bool beatLock = hostTempo && (tr->flags & CLAP_TRANSPORT_HAS_BEATS_TIMELINE) &&
@@ -244,11 +279,11 @@ void PolarPlugin::process(const clap_process_t* pr) {
             auto& ep = processor_.parameters();
             if (hostTempo) ep.tempo = (float)tr->tempo;
             tempo_.store(ep.tempo, std::memory_order_relaxed);
-            if (beatLock && ep.lfo_sync) {
-                // Beat at the first input frame of this engine block (may lie in the previous buffer).
-                const double beat = beat0 + ((double)i - 63.0) / sampleRate_ * tr->tempo / 60.0;
-                processor_.setLfoPhase(beat * (double)ep.division);
-            }
+            ep.playing = beatLock;
+            // Beat at the first input frame of this engine block (may lie in the previous buffer).
+            ep.song_position = beatLock ? beat0 + ((double)i - 63.0) / sampleRate_ * tr->tempo / 60.0 : 0.0;
+            ep.pitch_wheel = std::fmax(-1.f, std::fmin(1.f, ep.pitch_wheel + bend_ + tuning_ / 12.f));
+            ui_[P_PITCH_WHEEL].store(ep.pitch_wheel, std::memory_order_relaxed);
             float bl[64], br[64];
             bool ok = true;
             try {
@@ -271,6 +306,8 @@ void PolarPlugin::process(const clap_process_t* pr) {
                 }
             }
             carryFill_ = 0;
+            const auto& kb = processor_.engine().keyboard();
+            key_.store(kb.gate > 0.f ? kb.key : -1, std::memory_order_relaxed);
         }
 
         // One output frame per input frame; the 64-frame pre-fill from
@@ -321,7 +358,7 @@ bool PolarPlugin::loadState(const clap_istream_t* s) {
     unsigned version = 0;
     if (sscanf(cursor, "%63s %u", magic, &version) != 2) return false;
     if (strcmp(magic, kStateMagic) != 0) return false;
-    if (version != kStateVersion) return false;
+    if (version != kStateVersion && version != 1) return false;
     cursor = strchr(cursor, '\n');
     if (!cursor) return false;
     ++cursor;
@@ -331,7 +368,8 @@ bool PolarPlugin::loadState(const clap_istream_t* s) {
         if (sscanf(cursor, "%63s %lf", name, &value) != 2) break;
         for (int i = 0; i < PARAM_COUNT; ++i) {
             if (!strcmp(name, kParams[i].engine_name)) {
-                base_[i].store(clampToParam(kParams[i], (float)value), std::memory_order_relaxed);
+                const float v = version == 1 ? migrateStateV1((uint32_t)i, (float)value) : (float)value;
+                base_[i].store(clampToParam(kParams[i], v), std::memory_order_relaxed);
                 touched[i] = true;
                 break;
             }

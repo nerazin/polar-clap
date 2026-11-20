@@ -34,7 +34,7 @@ static const clap_plugin_descriptor_t s_descriptor = {
     "",                                           // url
     "",                                           // manual_url
     "",                                           // support_url
-    "0.3.0",                                      // version
+    "0.4.0",                                      // version
     "Spectral / periodic / granular pitch reconstruction", // description
     s_features,                                   // features
 };
@@ -129,6 +129,27 @@ static const clap_plugin_audio_ports_t s_audio_ports = {
     audio_ports_get,
 };
 
+// ------------------------------------------------------------- note ports
+// One note input: MIDI keys gate the envelope and play keyboard pitch; pitch bend moves
+// the Pitch Wheel.
+
+static uint32_t CLAP_ABI note_ports_count(const clap_plugin_t*, bool is_input) { return is_input ? 1 : 0; }
+
+static bool CLAP_ABI note_ports_get(const clap_plugin_t*, uint32_t index, bool is_input,
+                                    clap_note_port_info_t* info) {
+    if (!is_input || index != 0 || !info) return false;
+    info->id = 0;
+    info->supported_dialects = CLAP_NOTE_DIALECT_CLAP | CLAP_NOTE_DIALECT_MIDI;
+    info->preferred_dialect = CLAP_NOTE_DIALECT_CLAP;
+    snprintf(info->name, sizeof(info->name), "%s", "Keyboard");
+    return true;
+}
+
+static const clap_plugin_note_ports_t s_note_ports = {
+    note_ports_count,
+    note_ports_get,
+};
+
 // --------------------------------------------------------- remote controls
 // Bitwig shows these as the device's 8-knob pages, ready for its modulators.
 
@@ -146,6 +167,8 @@ static const RemotePage s_pages[] = {
              polar_clap::P_PITCH_LFO_1, polar_clap::P_PITCH_LFO_2, polar_clap::P_POSITION_LFO, polar_clap::P_PAN_LFO}},
     {"Envelope", {polar_clap::P_GATE, polar_clap::P_ATTACK, polar_clap::P_DECAY, polar_clap::P_SUSTAIN,
                   polar_clap::P_RELEASE, polar_clap::P_PITCH_ENV_1, polar_clap::P_PITCH_ENV_2, polar_clap::P_POSITION_ENV}},
+    {"Keyboard", {polar_clap::P_PITCH_WHEEL, polar_clap::P_KEYBOARD_PITCH, polar_clap::P_FILTER_KBD, polar_clap::P_GATE,
+                  polar_clap::P_ENV_TO_AMP, polar_clap::P_FILTER_ENV, polar_clap::P_PITCH_ENV_1, polar_clap::P_PITCH_ENV_2}},
 };
 
 static uint32_t CLAP_ABI remote_count(const clap_plugin_t*) { return sizeof(s_pages) / sizeof(s_pages[0]); }
@@ -310,6 +333,7 @@ static clap_process_status CLAP_ABI plugin_process(const clap_plugin_t* p,
 static const void* CLAP_ABI plugin_get_extension(const clap_plugin_t*, const char* id) {
     if (!strcmp(id, CLAP_EXT_PARAMS)) return &s_params;
     if (!strcmp(id, CLAP_EXT_AUDIO_PORTS)) return &s_audio_ports;
+    if (!strcmp(id, CLAP_EXT_NOTE_PORTS)) return &s_note_ports;
     if (!strcmp(id, CLAP_EXT_LATENCY)) return &s_latency;
     if (!strcmp(id, CLAP_EXT_STATE)) return &s_state;
     if (!strcmp(id, CLAP_EXT_REMOTE_CONTROLS) || !strcmp(id, CLAP_EXT_REMOTE_CONTROLS_COMPAT)) return &s_remote;

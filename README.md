@@ -2,18 +2,19 @@
 
 A CLAP audio plugin wrapping the recovered **Polar** DSP engine: the Smooth
 (phase-vocoder) and Classic (period-splice) FFT pitch shifters, forward and
-reverse granular Loop modes, dual shifters with feedback, filter, LFO and
-envelope. The Smooth and Classic cores, and every math routine they share with
+reverse granular Loop modes, dual shifters with feedback, filter, LFO,
+envelope and MIDI keyboard input (gate, keyboard pitch, pitch wheel). The Smooth
+and Classic cores, the LFO, the envelope, and every math routine they share with
 the original, are checked bit-for-bit against the original binary (see
 *Accuracy*).
 
 - **Plugin ID:** `com.polar-reconstruction.polar`
-- **Version:** 0.3.0
-- **Ports:** stereo in / stereo out
+- **Version:** 0.4.0
+- **Ports:** stereo in / stereo out, one note input (CLAP or MIDI)
 - **Latency:** constant 64 samples (reported to the host; Bitwig compensates)
 - **GUI:** built-in macOS Cocoa panel laid out like the original (Algorithm,
-  Delay Buffer, two Shifters, Dry Signal, Envelope, LFO, Filter); Bitwig also
-  gets six remote-control pages
+  Delay Buffer, two Shifters, Dry Signal, Envelope, LFO, Filter, Keys); Bitwig
+  also gets seven remote-control pages
 
 ## Build & install (macOS, Apple Silicon)
 
@@ -60,9 +61,11 @@ Uninstall: `rm -rf ~/Library/Audio/Plug-Ins/CLAP/"Polar Reconstruction.clap"`
    change **Pitch**, switch **Algorithm**, or engage **Lock** to freeze the
    captured material.
 4. Every parameter except Reset and Bypass accepts Bitwig modulators, switches
-   and menus included (see *Modulation* below). The six remote-control pages
-   (Main, Shifters, Feedback & Delay, Filter, LFO, Envelope) put the useful
-   targets on the device's 8 knobs.
+   and menus included (see *Modulation* below). The seven remote-control pages
+   (Main, Shifters, Feedback & Delay, Filter, LFO, Envelope, Keyboard) put the
+   useful targets on the device's 8 knobs.
+5. For MIDI, place it on an instrument track (after the instrument, or alone)
+   so the track's notes reach its note input; see *Keyboard* below.
 
 ## Troubleshooting
 
@@ -94,8 +97,10 @@ actually loads the binary after installing.
 ## Controls
 
 Controls take effect at the next 64-sample boundary, like the original (Reason
-renders in 64-frame batches). Host names are unchanged from 0.2, so saved
-projects and automation still load; the GUI uses the original panel's labels.
+renders in 64-frame batches). Parameter ids are unchanged from 0.2; the GUI uses
+the original panel's labels. 0.4 turns LFO Rate, LFO Sync Rate (was Division),
+LFO Wave and A/D/S/R into the original's knobs; projects saved by 0.3 are
+converted on load, automation of those parameters is not.
 
 | GUI section | Control (host name) | Range / values |
 | --- | --- | --- |
@@ -109,12 +114,13 @@ projects and automation still load; the GUI uses the original panel's labels.
 | Shifter 1 / 2 | LFO, Env (Pitch LFO / Env) | ±24 st depth |
 | Shifter 2 | enable LED, Delay (Enable Voice 2, Delay 2) | on/off, 0 … 1000 ms |
 | Dry Signal | Delay, Volume (Dry Delay, Dry) | 0 … 1000 ms, 0 … 100 % |
-| Envelope | Gate, A D S R, Amp (Env to Amp) | manual gate; 0 … 2 s, 0 … 100 % |
-| LFO | Rate, Cyc/Beat (Division), Phase, Pan (Pan LFO Depth) | 0.02 … 20 Hz free; 0.25 … 8 cycles per beat synced |
-| LFO | Sine · Tri · Saw · Sqr (LFO Wave), Sync (LFO Sync) | waveform; tempo sync |
+| Envelope | Gate, A D S R, Amp (Env to Amp) | button gate (MIDI keys gate it too); attack 0.1 ms … 3 s linear, decay and release time constants 0.1 ms … 10 s, sustain level, all cubic knobs as in the original; 0 … 100 % |
+| LFO | Rate, Synced (LFO Sync Rate), Phase, Pan (Pan LFO Depth) | 0.11 … 13.3 Hz exponential; 8 bars … 1/64 (18 steps, incl. 7/4, 5/4, 3/16, 1/8 T) |
+| LFO | Tri · Up · Down · Sqr · Rnd · Smth · Sine (LFO Wave), Sync (LFO Sync) | the original's six waves (triangle, saw up, saw down, square, random, smooth random) plus the binary's own unexposed sine; tempo sync |
 | Filter | enable LED, Freq (Cutoff), Res, LP · BP · HP · Comb | 0 … 100 % |
 | Filter | LFO, Env (Filter LFO / Env) | ±100 % depth |
 | Output | Output, Reset (Reset Capture), Bypass | −60 … +6 dB; clears the buffer; passes input |
+| Keys | P.Wheel (Pitch Wheel), Pitch (Keyboard Pitch), Flt Kbd (Filter Kbd) | ±12 st on both shifters; key − C4 on both shifters; filter key tracking 0 … 100 % |
 
 Cyan knobs are internal LFO/envelope depths: the one LFO and envelope reach the
 delay position, both shifters' pitch, the filter, the pan and the amplitude.
@@ -122,6 +128,24 @@ delay position, both shifters' pitch, the filter, the pan and the amplitude.
 Not in the GUI: *Force Reverse* (old alias of Rev Loop), *Fallback Tempo* (used
 only when the host sends no tempo) and the three hidden *External* parameters
 (kept for state compatibility).
+
+### Keyboard (MIDI)
+
+The original device's keyboard input, ported from its note handling:
+
+- **Mono, last key wins.** A new key takes over. Releasing the sounding key falls
+  back to the nearest held key above it, then below it, without retriggering the
+  envelope (legato); with no key left the envelope releases and the pitch stays.
+- **Keys gate the envelope**, so one key press drives everything the envelope
+  reaches: delay position, both shifters' pitch, the filter and (Env to Amp) the
+  level. The Gate button still works; pressing it while a key is held retriggers.
+- **Keyboard Pitch** transposes both shifters by key − 60 semitones (C4 = no
+  change). **Filter Kbd** adds the key to the cutoff (100 % tracks about one octave per
+  octave), with or without Keyboard Pitch.
+- **Pitch wheel**: ±12 semitones on both shifters, added after the knob smoothers.
+  MIDI pitch bend and the CLAP tuning expression add to the Pitch Wheel parameter,
+  which can also be automated or modulated.
+- The status line shows the sounding key.
 
 ### Modulation (Bitwig and other CLAP hosts)
 
@@ -141,8 +165,9 @@ only when the host sends no tempo) and the three hidden *External* parameters
   gesture end, from `process()` while audio runs and from `flush()` otherwise,
   so Bitwig records automation and its own knobs follow. The GUI draws host
   modulation as a violet arc and dot (switches: a violet outline).
-- **Tempo.** LFO Sync follows the host tempo, and while the transport plays the
-  LFO phase locks to the song position (Division cycles per beat plus Phase).
+- **Tempo.** LFO Sync follows the host tempo; while the transport plays, the LFO
+  reads the song position as the original reads Reason's, so it stays in phase
+  with the bar.
 
 ### Other behaviour
 
@@ -172,10 +197,13 @@ to this engine. Comparisons are bitwise; "differ" counts any changed bit.
 | Same math on arm64 and x86-64 (exhaustive hashes) | identical (NaN payloads aside) |
 | Smooth (FFT0) core, randomized controls, all mono/stereo × 1/2-voice variants, 44.1/48/96 kHz, every state word compared | 480,000 blocks, 0 differ |
 | Classic (FFT1) core, same stimulus | 480,000 blocks, 0 differ |
-| Harness can fail: a 1-ulp change in one constant | caught in block 0–1 |
-| `polar_golden_test`: the original's math (hashes taken by running the original) and tables, no binary needed | pass (a planted 1-ulp `expf` change fails it) |
+| LFO (`CLFOModule`), every wave incl. random and smooth random, free and tempo-synced, transport stopped and playing, 44.1/48/96 kHz, every state word compared | 12 × 500,000 ticks, 0 differ |
+| Envelope (`CADSRModule`), random knobs and gates (button, MIDI 1.01, both), all 64 samples and the state every block | 12 × 500,000 blocks, 0 differ |
+| Bundled binary64 `exp` (the envelope's coefficients) | 20 M inputs, 0 differ |
+| Harness can fail: a 1-ulp change in one constant | caught in block 0–1 (FFT cores); each of 10 LFO/envelope constants caught |
+| `polar_golden_test`: the original's math, LFO and envelope (hashes taken by running the original) and tables, no binary needed | pass (planted 1-ulp `expf` and LFO changes fail it) |
 | `polar_clap_test`: plugin through the CLAP ABI vs the engine in exact 64-frame blocks, random buffer sizes, events, modulation, 30 s soak | bit-identical |
-| `polar_whitebox_test`: gestures, event ids, modulation routing, host tempo, text formats | pass |
+| `polar_whitebox_test`: gestures, event ids, modulation routing, host tempo, key priority, notes and bend through the plugin, keyboard pitch and wheel on both shifters, 0.3 state conversion, text formats | pass |
 | All tests with `-fsanitize=address,undefined`, and as an Intel build under Rosetta | pass |
 
 Why the math matters: the original carries its own (newlib fdlibm) math library.
@@ -197,8 +225,10 @@ used its own routines.
 - Granular Loop/Rev Loop, the filters, feedback clipper, delays, pan, dry path and
   the whole engine graph were recovered from the disassembly and tested against
   references, not executed against the original.
-- LFO, envelope, public units and defaults are authored adapters, not original.
-- Not yet tested inside Bitwig or another DAW; no real Reason renders were compared.
+- The key handling (priority, legato, note value) and the wiring of wheel, keyboard
+  pitch and filter tracking were read from the disassembly and unit-tested, not
+  executed against the original. Public units and defaults are authored.
+- No real Reason renders were compared.
 
 ## Tests
 
@@ -223,7 +253,8 @@ verified* above for what the comparisons do and do not establish.
 ```
 CMakeLists.txt          build for macOS (.clap bundle) and Linux (.clap + tests)
 build-mac.sh            one-command Apple Silicon build + install
-engine/                 recovered DSP engine; bundled_math.hpp = the original's libm
+engine/                 recovered DSP engine; bundled_math.hpp = the original's libm;
+                        original_lfo/original_adsr/mono_keyboard.hpp = its LFO, envelope, keys
 src/params.{hpp,cpp}    parameter model shared by core, GUI and tests
 src/plugin.{hpp,cpp}    plugin instance: buffering, params, state, process
 src/entry.cpp           CLAP C ABI: callbacks, extensions, factory, entry
@@ -231,7 +262,8 @@ src/gui/polar_gui.{hpp,mm}  macOS Cocoa panel
 clap-sdk/               vendored CLAP 1.2 headers (MIT)
 tests/host_smoke.cpp    black-box host harness + bit-exact engine comparison
 tests/whitebox.cpp      C++-level unit tests
-tests/golden.cpp        the original's math and tables, pinned by hashes
+tests/golden.cpp        the original's math, LFO, envelope and tables, pinned by hashes
+tests/golden_stimulus.hpp  the stimulus those hashes were taken over
 tests/gui_snapshot.mm   renders the GUI to a PNG
 cmake/Info.plist.in     bundle metadata
 ```

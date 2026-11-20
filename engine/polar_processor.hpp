@@ -58,7 +58,9 @@ public:
     float sampleRate()const{return engine_.sampleRate();}
     const PolarEngine& engine()const{return engine_;}
     void processBlock(const float*l,const float*r,float*outL,float*outR){engine_.processBlock(l,r,outL,outR);}
-    void setLfoPhase(double phase){engine_.setLfoPhase(phase);}
+    void noteOn(int key){engine_.noteOn(key);}
+    void noteOff(int key){engine_.noteOff(key);}
+    void allNotesOff(){engine_.allNotesOff();}
     // Names are the public message/API interface. All values must be finite.
     bool set(const std::string& name,float value){
         if(!std::isfinite(value))return false;
@@ -74,10 +76,11 @@ public:
         POLAR_FLOAT(delay_2) POLAR_FLOAT(pitch_lfo_2) POLAR_FLOAT(pitch_env_2)
         POLAR_BOOL(filter_on) POLAR_INT(filter_mode) POLAR_FLOAT(cutoff) POLAR_FLOAT(resonance)
         POLAR_FLOAT(filter_lfo) POLAR_FLOAT(filter_env) POLAR_FLOAT(lfo_rate) POLAR_BOOL(lfo_sync)
-        POLAR_FLOAT(tempo) POLAR_FLOAT(division) POLAR_INT(lfo_wave) POLAR_FLOAT(lfo_phase) POLAR_FLOAT(pan_lfo)
+        POLAR_FLOAT(tempo) POLAR_INT(division) POLAR_INT(lfo_wave) POLAR_FLOAT(lfo_phase) POLAR_FLOAT(pan_lfo)
         POLAR_BOOL(gate) POLAR_FLOAT(attack) POLAR_FLOAT(decay) POLAR_FLOAT(sustain) POLAR_FLOAT(release)
         POLAR_FLOAT(env_to_amp) POLAR_FLOAT(dry) POLAR_FLOAT(dry_delay) POLAR_FLOAT(output_db) POLAR_BOOL(bypass)
         POLAR_BOOL(external_modulation) POLAR_FLOAT(external_lfo) POLAR_FLOAT(external_envelope)
+        POLAR_FLOAT(pitch_wheel) POLAR_BOOL(keyboard_pitch) POLAR_FLOAT(filter_kbd)
 #undef POLAR_FLOAT
 #undef POLAR_INT
 #undef POLAR_BOOL

@@ -3,7 +3,8 @@
 // Portable 64-sample Polar reconstruction engine.
 // Recovered: granular kernels, mode/Lock timing, control/gain smoothers,
 // feedback topology and visible output-filter recurrences.
-// Adapted: public parameter units/defaults, LFO, ADSR, manual tempo, bypass.
+// Ported from the original routines and proven against them: LFO, ADSR, mono keyboard.
+// Adapted: public parameter units/defaults, manual tempo, bypass, host modulation.
 // The FFT algorithms are supplied through PitchRenderer by the application.
 // Compile without fast-math/FMA contraction for instruction-order comparisons.
 
@@ -17,6 +18,9 @@
 #include <utility>
 #include <vector>
 #include "bundled_math.hpp"
+#include "mono_keyboard.hpp"
+#include "original_adsr.hpp"
+#include "original_lfo.hpp"
 
 namespace polar_recovered {
 namespace engine_detail {
@@ -249,41 +253,6 @@ inline float soft_feedback(float x) {
     return std::copysign(y, x);
 }
 
-// Authored portable ADSR adapter. The original envelope class and Reason
-// host/transport behavior are not represented as recovered equivalence.
-struct Envelope {
-    enum Stage { idle, attack_stage, decay_stage, sustain_stage, release_stage } stage = idle;
-    float value = 0, release_step = 0;
-    bool previous_gate = false;
-    void reset() { stage = idle; value = release_step = 0; previous_gate = false; }
-    float step(bool gate, float attack, float decay, float sustain, float release, float rate) {
-        sustain = clamp(sustain, 0.0f, 1.0f);
-        if (gate && !previous_gate) stage = attack_stage;
-        if (!gate && previous_gate) {
-            stage = release_stage;
-            release_step = value / std::max(1.0f, release * rate);
-        }
-        previous_gate = gate;
-        switch (stage) {
-        case idle: value = 0; break;
-        case attack_stage:
-            value += 1.0f / std::max(1.0f, attack * rate);
-            if (value >= 1) { value = 1; stage = decay_stage; }
-            break;
-        case decay_stage:
-            value -= (1 - sustain) / std::max(1.0f, decay * rate);
-            if (value <= sustain) { value = sustain; stage = sustain_stage; }
-            break;
-        case sustain_stage: value = sustain; break;
-        case release_stage:
-            value -= release_step;
-            if (value <= 0) { value = 0; stage = idle; }
-            break;
-        }
-        return value;
-    }
-};
-
 } // namespace engine_detail
 
 class PolarEngine {
@@ -308,13 +277,23 @@ public:
         bool filter_on = false;
         int filter_mode = 0;     // LP,BP,HP,comb
         float cutoff = 0.75f, resonance = 0.2f, filter_lfo = 0, filter_env = 0;
-        float lfo_rate = 0.30f;
+        // LFO and envelope: the original's raw 0..1 knobs (see original_lfo/adsr.hpp).
+        float lfo_rate = 0.22f;  // 8.18 Hz * 2^(7 (rate - 0.9)): 0.11..13.3 Hz
         bool lfo_sync = false;
-        float tempo = 120, division = 1;
-        int lfo_wave = 0;        // sine,triangle,saw,square (portable adapter)
+        float tempo = 120;       // used when the host gives none
+        int division = 11;       // synced cycle, OriginalLfo::syncBeats index (11 = 1 beat)
+        int lfo_wave = 0;        // OriginalLfo::shapeForWave index
         float lfo_phase = 0, pan_lfo = 0;
         bool gate = false;
-        float attack = 0.02f, decay = 0.2f, sustain = 0.7f, release = 0.5f, env_to_amp = 0;
+        float attack = 0.19f, decay = 0.27f, sustain = 0.89f, release = 0.37f, env_to_amp = 0;
+        // Keyboard: pitch wheel in octaves (both shifters, after the smoothers), keyboard
+        // pitch (key - 60 semitones) on/off, and keyboard tracking of the filter cutoff.
+        float pitch_wheel = 0;
+        bool keyboard_pitch = false;
+        float filter_kbd = 0;
+        // Host transport for the synced LFO: playing, and song position in quarter notes.
+        bool playing = false;
+        double song_position = 0;
         float dry = 0, dry_delay = 0, output_db = -6;
         bool bypass = false;
         // Optional external scalar modulation for host adapters or validation.
@@ -355,8 +334,11 @@ public:
     int lockTransitionSamples() const { return transition_; }
     bool hasPitchRenderer() const { return static_cast<bool>(pitch_renderer_); }
     const PitchOutput& pitchOutput() const { return pitch_output_; }
-    // Host transport sync for the (adapter) LFO: phase in cycles, applied to the next block.
-    void setLfoPhase(double phase) { lfo_phase_ = phase - std::floor(phase); }
+    // MIDI keys (mono, as the original): they gate the envelope and drive keyboard pitch.
+    void noteOn(int key) { keyboard_.noteOn(key); }
+    void noteOff(int key) { keyboard_.noteOff(key); }
+    void allNotesOff() { keyboard_.allNotesOff(); }
+    const MonoKeyboard& keyboard() const { return keyboard_; }
     void setPitchRenderer(PitchRenderer renderer) {
         pitch_renderer_ = std::move(renderer); ++reset_generation_;
     }
@@ -388,8 +370,9 @@ private:
     std::array<engine_detail::GrainBank, 2> grain_banks_{};
     std::array<engine_detail::IntegerDelay, 4> delays_{}; // P2L/R,dryL/R
     std::array<engine_detail::OutputFilter, 2> filters_{};
-    engine_detail::Envelope envelope_{};
-    double lfo_phase_ = 0;
+    OriginalAdsr envelope_{};
+    OriginalLfo lfo_{};
+    MonoKeyboard keyboard_{};
     PitchRenderer pitch_renderer_{};
     PitchOutput pitch_output_{};
     void configureMode(int mode, float speed, double anchor);
@@ -408,6 +391,7 @@ inline void PolarEngine::setSampleRate(float rate) {
     for (auto& s : scalar_controls_) s.set_rate(sample_rate_);
     for (auto& s : gain_controls_) s.set_rate(sample_rate_);
     for (auto& d : delays_) d.configure(sample_rate_);
+    envelope_.sample_rate = lfo_.sample_rate = sample_rate_;
     reset();
 }
 
@@ -425,7 +409,7 @@ inline void PolarEngine::reset() {
     for (auto& d : delays_) d.reset();
     for (auto& f : filters_) f.reset();
     for (auto& channel : pitch_output_) channel.fill(0);
-    envelope_.reset(); lfo_phase_ = 0;
+    envelope_.reset(); lfo_.reset();
     // Original sample-rate setup configures stored mode-1/speed0.02 even
     // before the first real mode is selected, establishing the old bounds.
     configureMode(-1, 0.02f, 4096.0);
@@ -520,27 +504,23 @@ inline void PolarEngine::processBlock(const float* input_left, const float* inpu
     }
     if (p.lock != locked_) { locked_ = p.lock; transition_ = 0; }
 
-    // These modulation sources are explicit portable host adapters. The
-    // instruction-derived pitch/filter equations below consume block scalars.
+    // Envelope gate: EnvGate plus the MIDI gate, summed as the device graph does. The
+    // envelope runs per sample; the LFO gives one value per block. Pitch, position and
+    // filter depths read the envelope's first sample, Env to Amp the whole block.
     Block envelope;
-    for (std::size_t i = 0; i < block_size; ++i)
-        envelope[i] = p.external_modulation ? clamp(p.external_envelope, 0.0f, 1.0f)
-            : envelope_.step(p.gate, p.attack, p.decay, p.sustain, p.release, sample_rate_);
-    double phase = lfo_phase_ + p.lfo_phase;
-    phase -= std::floor(phase);
-    float lfo;
-    switch (clamp(p.lfo_wave, 0, 3)) {
-    case 1: lfo = static_cast<float>(1.0 - 4.0 * std::abs(phase - 0.5)); break;
-    case 2: lfo = static_cast<float>(2.0 * phase - 1.0); break;
-    case 3: lfo = phase < 0.5 ? 1.0f : -1.0f; break;
-    default: lfo = static_cast<float>(std::sin(6.2831853071795864769 * phase)); break;
-    }
+    envelope_.process(add(p.gate ? 1.0f : 0.0f, keyboard_.gate), clamp(p.attack, 0.0f, 1.0f),
+                      clamp(p.decay, 0.0f, 1.0f), clamp(p.sustain, 0.0f, 1.0f),
+                      clamp(p.release, 0.0f, 1.0f), envelope.data());
+    if (p.external_modulation) envelope.fill(clamp(p.external_envelope, 0.0f, 1.0f));
+    float lfo = lfo_.tick(OriginalLfo::shapeForWave(p.lfo_wave), add(-0.9f, clamp(p.lfo_rate, 0.0f, 1.0f)),
+                          p.lfo_sync ? 1.0f : 0.0f, divide(static_cast<float>(clamp(p.division, 0, 17)), 17.0f),
+                          clamp(p.lfo_phase, 0.0f, 1.0f), clamp(p.tempo, 1.0f, 999.0f), p.playing,
+                          p.song_position * 15360.0);
     if (p.external_modulation) lfo = clamp(p.external_lfo, -1.0f, 1.0f);
-    const float lfo_rate = p.lfo_sync ? clamp(p.tempo, 1.0f, 999.0f) / 60.0f * p.division
-                                     : clamp(p.lfo_rate, 0.02f, 20.0f);
-    lfo_phase_ += static_cast<double>(lfo_rate) * block_size / sample_rate_;
-    lfo_phase_ -= std::floor(lfo_phase_);
     const float env = envelope[0];
+    // Pitch wheel and keyboard pitch, in octaves, enter after the knob smoothers.
+    const float keys = add(clamp(p.pitch_wheel, -1.0f, 1.0f),
+                           p.keyboard_pitch ? mul(keyboard_.value, 7.0f) : 0.0f);
 
     const float octave1 = scalar_controls_[pitch1_control].scalar(tick,
                              divide(add(p.pitch_1, divide(p.tune_1, 100.0f)), 12.0f));
@@ -548,8 +528,8 @@ inline void PolarEngine::processBlock(const float* input_left, const float* inpu
                              divide(add(p.pitch_2, divide(p.tune_2, 100.0f)), 12.0f));
     const float mod1 = divide(add(add(mul(p.pitch_lfo_1, lfo), mul(p.pitch_env_1, env)), p.pitch_mod_1), 12.0f);
     const float mod2 = divide(add(add(mul(p.pitch_lfo_2, lfo), mul(p.pitch_env_2, env)), p.pitch_mod_2), 12.0f);
-    const float ratio1 = bundled::expf(mul(0.6931471824645996f, clamp(add(octave1, mod1), -4.0f, 4.0f)));
-    const float ratio2 = bundled::expf(mul(0.6931471824645996f, clamp(add(octave2, mod2), -4.0f, 4.0f)));
+    const float ratio1 = bundled::expf(mul(0.6931471824645996f, clamp(add(add(octave1, mod1), keys), -4.0f, 4.0f)));
+    const float ratio2 = bundled::expf(mul(0.6931471824645996f, clamp(add(add(octave2, mod2), keys), -4.0f, 4.0f)));
     const float base_position = scalar_controls_[position_control].scalar(tick, p.position);
     const float position = std::min(1.7000000476837158f,
                    add(add(add(base_position, mul(p.position_lfo, lfo)), mul(p.position_env, env)), p.position_mod));
@@ -642,8 +622,9 @@ inline void PolarEngine::processBlock(const float* input_left, const float* inpu
                                                      clamp(p.cutoff, 0.0f, 1.0f))));
         const float resonance = clamp(add(scalar_controls_[resonance_control].scalar(tick,
                                     clamp(p.resonance, 0.0f, 1.0f)), p.resonance_mod), 0.0f, 1.0f);
-        const float c = add(add(add(cutoff, mul(p.filter_lfo, lfo)), mul(p.filter_env, env)),
-                            mul(1.100000023841858f, p.cutoff_mod));
+        const float c = add(add(add(add(cutoff, mul(p.filter_lfo, lfo)), mul(p.filter_env, env)),
+                                mul(1.100000023841858f, p.cutoff_mod)),
+                            mul(clamp(p.filter_kbd, 0.0f, 1.0f), keyboard_.value));
         const int filter_mode = clamp(p.filter_mode, 0, 3);
         filters_[0].process(mixed_left.data(), filtered_left.data(), filter_mode, c,
                             resonance, sample_rate_);
