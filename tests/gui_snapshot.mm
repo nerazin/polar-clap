@@ -40,7 +40,7 @@ int main(int argc, char** argv) {
         clap_audio_buffer_t ib{}, ob{}; ib.data32 = in; ib.channel_count = 2; ob.data32 = out; ob.channel_count = 2;
         clap_process_t pr{}; pr.frames_count = 64; pr.audio_inputs = &ib; pr.audio_inputs_count = 1;
         pr.audio_outputs = &ob; pr.audio_outputs_count = 1;
-        pl->process(&pr);  // publishes the effective values the GUI draws
+        for (int k = 0; k < 3000; ++k) pl->process(&pr);  // effective values, and a full LFO cycle for the scope
         if (!polar_clap::gui::create(*pl) || !polar_clap::gui::snapshot(*pl, argv[1])) { printf("snapshot failed\n"); return 1; }
         polar_clap::gui::destroy(*pl);
         cp->deactivate(cp);

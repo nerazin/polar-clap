@@ -306,6 +306,20 @@ int main() {
         run(ev, 1);
         if (pl->uiKey() != -1) fail("MIDI note on with velocity 0 is a note off");
 
+        // LFO scope: a fast Saw Up fills every column with its own phase's value, no gaps.
+        pl->uiSetValue(polar_clap::P_LFO_WAVE, 1.f);
+        pl->uiSetValue(polar_clap::P_LFO_RATE, 1.f);  // 13.3 Hz: about one column per block
+        pl->flushParams(nullptr, &sink.iface);
+        run(none, 20);
+        for (int i = 0; i < PolarPlugin::kScopeSize; ++i) {
+            const float expected = 2.f * (i + 0.5f) / PolarPlugin::kScopeSize - 1.f;
+            if (std::fabs(pl->uiScope(i) - expected) > 0.07f) { fail("LFO scope column off the saw"); break; }
+        }
+        if (pl->uiLfoPosition() < 0.f || pl->uiLfoPosition() > 1.f) fail("LFO scope position out of range");
+        // A GUI edit with no modulation shows no modulation, even before the next block.
+        pl->uiSetValue(polar_clap::P_LFO_PHASE, 0.4f);
+        if (pl->uiValue(polar_clap::P_LFO_PHASE) != pl->uiBase(polar_clap::P_LFO_PHASE)) fail("GUI edit shows stale modulation");
+
         // State version 1 (0.3.x units) is migrated.
         const char v1[] = "polar-clap-state 1\nlfo_rate 0.3\ndivision 2\nlfo_wave 0\nattack 0.02\nsustain 0.7\npitch_1 5\n";
         struct Src { const char* p; size_t n, at; } src{v1, sizeof(v1) - 1, 0};

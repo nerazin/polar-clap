@@ -1,5 +1,6 @@
 #include "plugin.hpp"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -26,7 +27,7 @@ bool PolarPlugin::init() {
         mod[i] = 0.0f;
         base_[i].store(kParams[i].def, std::memory_order_relaxed);
         mod_[i].store(0.0f, std::memory_order_relaxed);
-        ui_[i].store(kParams[i].def, std::memory_order_relaxed);
+        uiOffset_[i].store(0.0f, std::memory_order_relaxed);
     }
     applyAllToEngine(base, mod, processor_.parameters());
     if (host_ && host_->get_extension)
@@ -224,8 +225,23 @@ static void applyParams(PolarPlugin& pl) {
         float v = effectiveValue(d, base[i], mod[i]);
         if (d.kind == kInt) v = std::round(v);
         else if (d.kind != kFloat) v = v >= 0.5f ? 1.f : 0.f;
-        pl.ui_[i].store(v, std::memory_order_relaxed);
+        pl.uiOffset_[i].store(v - base[i], std::memory_order_relaxed);
     }
+}
+
+// One LFO value per engine block goes into the scope column of its cycle position. Columns
+// skipped since the previous block (fast rates) get the same value so the trace has no gaps;
+// a backward jump (sync relock, reset) writes only its own column.
+void PolarPlugin::publishLfo() {
+    const auto& lfo = processor_.engine().lfo();
+    const float pos = std::fmin(std::fmax(lfo.position, 0.f), 1.f);
+    const int col = std::min((int)(pos * kScopeSize), kScopeSize - 1);
+    const int ahead = scopeColumn_ < 0 ? 0 : (col - scopeColumn_ + kScopeSize) % kScopeSize;
+    for (int k = ahead <= kScopeSize / 2 ? ahead - 1 : 0; k > 0; --k)
+        scope_[(col - k + kScopeSize) % kScopeSize].store(lfo.value, std::memory_order_relaxed);
+    scope_[col].store(lfo.value, std::memory_order_relaxed);
+    scopeColumn_ = col;
+    lfoPosition_.store(pos, std::memory_order_relaxed);
 }
 
 void PolarPlugin::process(const clap_process_t* pr) {
@@ -283,7 +299,8 @@ void PolarPlugin::process(const clap_process_t* pr) {
             // Beat at the first input frame of this engine block (may lie in the previous buffer).
             ep.song_position = beatLock ? beat0 + ((double)i - 63.0) / sampleRate_ * tr->tempo / 60.0 : 0.0;
             ep.pitch_wheel = std::fmax(-1.f, std::fmin(1.f, ep.pitch_wheel + bend_ + tuning_ / 12.f));
-            ui_[P_PITCH_WHEEL].store(ep.pitch_wheel, std::memory_order_relaxed);
+            uiOffset_[P_PITCH_WHEEL].store(ep.pitch_wheel - base_[P_PITCH_WHEEL].load(std::memory_order_relaxed),
+                                           std::memory_order_relaxed);
             float bl[64], br[64];
             bool ok = true;
             try {
@@ -308,6 +325,7 @@ void PolarPlugin::process(const clap_process_t* pr) {
             carryFill_ = 0;
             const auto& kb = processor_.engine().keyboard();
             key_.store(kb.gate > 0.f ? kb.key : -1, std::memory_order_relaxed);
+            publishLfo();
         }
 
         // One output frame per input frame; the 64-frame pre-fill from

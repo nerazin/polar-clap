@@ -53,8 +53,11 @@ public:
     // ---- GUI-facing API (main thread) -------------------------------------
     uint32_t paramCount() const { return (uint32_t)PARAM_COUNT; }
     const ParamDesc& desc(uint32_t index) const { return kParams[index]; }
-    // Effective value (base + current modulation) as last seen by the engine.
-    float uiValue(uint32_t index) const { return ui_[index].load(std::memory_order_relaxed); }
+    // Effective value: the current base plus the offset modulation added in the engine's last
+    // block, so a GUI edit never shows as a stale modulation arc.
+    float uiValue(uint32_t index) const {
+        return base_[index].load(std::memory_order_relaxed) + uiOffset_[index].load(std::memory_order_relaxed);
+    }
     // Current host modulation offset for the UI ring display.
     float uiMod(uint32_t index) const { return mod_[index].load(std::memory_order_relaxed); }
     float uiBase(uint32_t index) const { return base_[index].load(std::memory_order_relaxed); }
@@ -70,6 +73,10 @@ public:
     float uiTempo() const { return tempo_.load(std::memory_order_relaxed); }
     // Sounding MIDI key while one is held, else -1.
     int uiKey() const { return key_.load(std::memory_order_relaxed); }
+    // LFO scope: the last cycle of LFO output in kScopeSize columns, indexed by cycle position.
+    static constexpr int kScopeSize = 64;
+    float uiScope(int column) const { return scope_[column].load(std::memory_order_relaxed); }
+    float uiLfoPosition() const { return lfoPosition_.load(std::memory_order_relaxed); }
 
     polar_recovered::PolarProcessor& processor() { return processor_; }
     const clap_host_t* host() const { return host_; }
@@ -92,6 +99,7 @@ public:
     void activateMain(double sampleRate);
     void deactivateMain();
     void process(const clap_process_t* process);
+    void publishLfo();
     void flushParams(const clap_input_events_t* in, const clap_output_events_t* out);
     void resetEngine();
     bool saveState(const clap_ostream_t* s) const;
@@ -109,10 +117,13 @@ public:
     // Parameter values. base_: host/GUI value; mod_: host modulation offsets.
     std::atomic<float> base_[PARAM_COUNT]{};
     std::atomic<float> mod_[PARAM_COUNT]{};
-    std::atomic<float> ui_[PARAM_COUNT]{};       // effective values published per block
+    std::atomic<float> uiOffset_[PARAM_COUNT]{};  // effective - base, published per block
     GuiEventQueue guiEvents_;
     std::atomic<float> tempo_{120.0f};
     std::atomic<int> key_{-1};
+    std::atomic<float> scope_[kScopeSize]{};
+    std::atomic<float> lfoPosition_{0.0f};
+    int scopeColumn_ = -1;  // column written by the previous block (audio thread)
     // MIDI pitch bend (-1..1 = +-1 octave) and CLAP tuning expression (semitones), added to
     // the Pitch Wheel parameter. Audio thread only.
     float bend_ = 0.f, tuning_ = 0.f;

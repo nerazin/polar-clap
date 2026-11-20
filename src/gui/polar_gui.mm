@@ -12,6 +12,9 @@
 #include "../params.hpp"
 
 #import <AppKit/AppKit.h>
+#import <QuartzCore/QuartzCore.h>
+
+#include <algorithm>
 
 #include <cmath>
 #include <functional>
@@ -357,6 +360,58 @@ enum ControlStyle { kKnob, kBigKnob, kDepthKnob, kSlider, kLed, kRadio, kSegment
 
 // ------------------------------------------------------------------- panel
 
+// ------------------------------------------------------------- LFO scope
+
+// The LFO's output over its last cycle, drawn as a sweep: the dot is the current position, the
+// trace behind it is this cycle and the trace ahead is the previous one. The line is zero.
+@interface LfoScope : NSView {
+@public
+    PolarPlugin* mPlugin;
+    std::shared_ptr<std::atomic<bool>> mAlive;
+    float mShown[PolarPlugin::kScopeSize + 1];  // the columns, then the position
+}
+- (void)refreshFromPlugin;
+@end
+
+@implementation LfoScope
+- (BOOL)isFlipped { return YES; }
+- (void)refreshFromPlugin {
+    if (!(mAlive && mAlive->load())) return;
+    const int n = PolarPlugin::kScopeSize;
+    BOOL changed = NO;
+    for (int i = 0; i <= n; ++i) {
+        const float v = i < n ? mPlugin->uiScope(i) : mPlugin->uiLfoPosition();
+        if (v != mShown[i]) { mShown[i] = v; changed = YES; }
+    }
+    if (changed) [self setNeedsDisplay:YES];
+}
+- (void)drawRect:(NSRect)dirty {
+    (void)dirty;
+    const int n = PolarPlugin::kScopeSize;
+    [CBackground() setFill];
+    [[NSBezierPath bezierPathWithRoundedRect:self.bounds xRadius:3 yRadius:3] fill];
+    const NSRect b = NSInsetRect(self.bounds, 3, 2.5);
+    const CGFloat mid = NSMidY(b), amp = b.size.height / 2;
+    auto x = [&](double f) { return b.origin.x + f * b.size.width; };
+    auto y = [&](float v) { return mid - amp * std::fmin(std::fmax(v, -1.0f), 1.0f); };
+    [CTrack() setFill];
+    NSRectFill(NSMakeRect(b.origin.x, std::floor(mid), b.size.width, 1));
+    NSBezierPath* trace = [NSBezierPath bezierPath];
+    trace.lineWidth = 1.25; trace.lineJoinStyle = NSLineJoinStyleRound;
+    for (int i = 0; i < n; ++i) {
+        const NSPoint pt = NSMakePoint(x((i + 0.5) / n), y(mShown[i]));
+        if (i == 0) [trace moveToPoint:pt]; else [trace lineToPoint:pt];
+    }
+    [CCyan() setStroke]; [trace stroke];
+    const float pos = mShown[n];
+    const int col = std::min((int)(pos * n), n - 1);
+    [CText() setFill];
+    [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(x(pos) - 2, y(mShown[col]) - 2, 4, 4)] fill];
+}
+@end
+
+// ------------------------------------------------------------- panel
+
 struct Section { NSRect r; NSString* title; };
 
 @interface PolarPanel : NSView {
@@ -404,7 +459,8 @@ struct Section { NSRect r; NSString* title; };
     PolarPlugin* mPlugin;
     PolarPanel* mPanel;
     NSMutableArray* mControls;
-    NSTimer* mTimer;
+    LfoScope* mScope;  // owned by mPanel
+    id mRefresh;       // CADisplayLink at the display's rate (macOS 14+), else an NSTimer
     NSSize mSize;
 }
 - (id)initWithPlugin:(PolarPlugin*)plugin;
@@ -423,8 +479,15 @@ struct Section { NSRect r; NSString* title; };
         mPlugin = plugin;
         mControls = [[NSMutableArray alloc] init];
         [self buildLayout];
-        mTimer = [[NSTimer scheduledTimerWithTimeInterval:1.0 / 30.0 target:self selector:@selector(tick:)
-                                                 userInfo:nil repeats:YES] retain];
+        if (@available(macOS 14.0, *)) {  // follows the screen the panel is on: up to 120 Hz on ProMotion
+            CADisplayLink* link = [mPanel displayLinkWithTarget:self selector:@selector(tick:)];
+            link.preferredFrameRateRange = CAFrameRateRange{30, 120, 120};
+            [link addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes];
+            mRefresh = [link retain];
+        } else {
+            mRefresh = [[NSTimer scheduledTimerWithTimeInterval:1.0 / 60.0 target:self selector:@selector(tick:)
+                                                       userInfo:nil repeats:YES] retain];
+        }
     }
     return self;
 }
@@ -514,6 +577,11 @@ struct Section { NSRect r; NSString* title; };
     PolarControl* wave = [self add:pc::P_LFO_WAVE style:kSegments x:rx + 8 y:top + 230 w:226 h:22 label:@""];
     wave->mShortNames = {"Tri", "Up", "Down", "Sqr", "Rnd", "Smth", "Sine"};
     [self add:pc::P_LFO_SYNC style:kLed x:rx + 120 y:top + 137 w:60 h:18 label:@"Sync"];
+    mScope = [[LfoScope alloc] initWithFrame:NSMakeRect(rx + 42, top + 138, 72, 16)];
+    mScope->mPlugin = pl;
+    mScope->mAlive = pl->guiAlive;
+    [mPanel addSubview:mScope];
+    [mScope release];
 
     [self section:@"      FILTER" x:rx y:top + 270 w:rw h:140];
     [self add:pc::P_FILTER_ON style:kLed x:rx + 8 y:top + 275 w:24 h:18 label:@""];
@@ -547,9 +615,10 @@ struct Section { NSRect r; NSString* title; };
 
 - (void)setVisible:(BOOL)visible { mPanel.hidden = !visible; }
 
-- (void)tick:(NSTimer*)timer {
-    (void)timer;
+- (void)tick:(id)sender {
+    (void)sender;
     for (PolarControl* c in mControls) [c refreshFromPlugin];
+    [mScope refreshFromPlugin];
     const float tempo = mPlugin->uiTempo();
     const int key = mPlugin->uiKey();
     static const char* names[12] = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
@@ -558,9 +627,10 @@ struct Section { NSRect r; NSString* title; };
 }
 
 - (void)shutdown {
-    [mTimer invalidate];
-    [mTimer release];
-    mTimer = nil;
+    [mRefresh invalidate];
+    [mRefresh release];
+    mRefresh = nil;
+    mScope = nil;
     [mPanel removeFromSuperview];
     [mControls release];
     mControls = nil;
@@ -569,8 +639,8 @@ struct Section { NSRect r; NSString* title; };
 }
 
 - (void)dealloc {
-    if (mTimer) [mTimer invalidate];
-    [mTimer release];
+    [mRefresh invalidate];
+    [mRefresh release];
     [mControls release];
     [mPanel release];
     [super dealloc];

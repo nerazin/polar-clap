@@ -339,6 +339,7 @@ public:
     void noteOff(int key) { keyboard_.noteOff(key); }
     void allNotesOff() { keyboard_.allNotesOff(); }
     const MonoKeyboard& keyboard() const { return keyboard_; }
+    const OriginalLfo& lfo() const { return lfo_; }
     void setPitchRenderer(PitchRenderer renderer) {
         pitch_renderer_ = std::move(renderer); ++reset_generation_;
     }

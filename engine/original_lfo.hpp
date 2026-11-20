@@ -35,8 +35,9 @@ struct OriginalLfo {
     float previous = 0;         // +0x160 phase of the previous tick
     float smooth = 0;           // +0x16c smoothed random
     float value = 0;            // +0x10c
+    float position = 0;         // p, the cycle position the shapes read (for display)
 
-    void reset() { value = 0; phase = 0; smooth = 0; }
+    void reset() { value = 0; phase = 0; smooth = 0; position = 0; }
 
     // shape: internal shape number; rate: mapped LFORate (-0.9..0.1); sync: LFOSync;
     // syncRate: LFORateDummy mapped to 0..1; phaseOffset: LFOPhase. tempo, playing and
@@ -68,6 +69,7 @@ struct OriginalLfo {
         if (0.0f > x) x += 1.0f;
         float p = 64.0f * step + x;
         if (p > 1.0f) p += -1.0f;
+        position = p;
         float stored = offset + p;
         if (stored > 1.0f) stored += -1.0f;
         phase = stored;
